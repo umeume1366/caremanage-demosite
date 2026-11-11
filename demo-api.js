@@ -15,6 +15,8 @@
       { id: 8, role: 'provider', cm_id: 1, office_id: 14, login_id: 'yougu-demo', name: '村上 剛', pw: 'Demo-pass-123', must: false, active: true },
       { id: 9, role: 'provider', cm_id: 1, office_id: 16, login_id: 'yakkyoku-demo', name: '近藤 彩', pw: 'Demo-pass-123', must: false, active: true },
       { id: 10, role: 'provider', cm_id: 1, office_id: 19, login_id: 'tokuyou-demo', name: '石井 隆', pw: 'Demo-pass-123', must: false, active: true },
+      // 2人目のケアマネ（同じ事業所IDを共有するしくみの見本）
+      { id: 11, role: 'cm', cm_id: 11, office_id: null, login_id: 'cm2-demo', name: '大野 美香', pw: 'Demo-pass-123', must: false, active: true },
     ],
     // いろいろな種類のサービス事業所（居宅サービス・入所サービス）
     offices: [
@@ -42,7 +44,14 @@
       { id: 22, name: '介護付き有料老人ホーム さくら館', service_type: '特定施設入居者生活介護', can_post: false, active: true },
       { id: 23, name: '介護医療院 しおさい', service_type: '介護医療院', can_post: false, active: true },
       { id: 24, name: '住まいの改修 たくみ工務店', service_type: '住宅改修', can_post: false, active: true },
+      // 2人目のケアマネ（大野）が登録している事業所
+      { id: 101, cm_id: 11, name: 'ひまわり訪問介護', service_type: '訪問介護', can_post: true, active: true },
+      { id: 102, cm_id: 11, name: 'さくらデイサービス', service_type: '通所介護', can_post: true, active: true },
+      { id: 103, cm_id: 11, name: 'はなみずき訪問看護', service_type: '訪問看護', can_post: false, active: true },
+      { id: 104, cm_id: 11, name: 'あおば福祉用具', service_type: '福祉用具貸与', can_post: false, active: true },
     ],
+    // 事業所アカウントと、ケアマネとのつながり（1つのIDで複数のケアマネとつながれる）
+    links: [],
     clients: [],
     messages: [],
     reads: new Set(),
@@ -150,6 +159,32 @@
     }
   })();
 
+  // ---- 2人目のケアマネ（大野）の利用者8名と、つながり ----
+  (() => {
+    for (const o of db.offices) if (o.cm_id == null) o.cm_id = 1;
+    for (const c of db.clients) c.cm_id = 1;
+    for (const x of db.users) if (x.role === 'provider') db.links.push({ user_id: x.id, cm_id: 1, office_id: x.office_id, status: 'active', active: true, at: T - 90 * D });
+    // ひまわり訪問介護（office-demo）は大野ケアマネともつながっている。さくらデイ（day-demo）には大野ケアマネから依頼が届いている
+    db.links.push({ user_id: 2, cm_id: 11, office_id: 101, status: 'active', active: true, at: T - 30 * D });
+    db.links.push({ user_id: 3, cm_id: 11, office_id: 102, status: 'pending', active: true, at: T - 1 * D });
+    const list = [
+      ['前川 ミドリ', '要介護2・独居', [101, 104]], ['小野寺 守', '要介護3・夫婦のみ世帯', [101, 102, 103]], ['菅原 トシ', '要介護1・長女と同居', [102]],
+      ['北村 清一', '要介護4・長男夫婦と同居', [101, 103, 104]], ['今井 フサ', '要支援2・独居', [101]], ['杉山 勝', '要介護2・日中独居', [102, 104]],
+      ['野村 ちよ', '要介護3・次女が近所に在住', [101, 102]], ['宮本 和夫', '要介護1・夫婦のみ世帯', [103]],
+    ];
+    list.forEach(([name, note, ids], i) => db.clients.push({ id: 101 + i, cm_id: 11, name, note, archived: false, office_ids: ids }));
+    const msgs = [
+      [101, 11, '来週から訪問の曜日を火・金に変更します。よろしくお願いします。', 30], [101, 2, '承知しました。火・金で調整します。', 26],
+      [102, 11, '退院後の初回訪問は明日です。転倒に気をつけてください。', 20], [102, 2, '本日伺いました。室内は杖で歩けています。', 3],
+      [104, 11, 'ベッドの高さについて、ご家族から相談がありました。', 9], [107, 2, '本日の買い物代行の領収書を連絡帳に入れました。', 1],
+    ];
+    let t0 = 9000;
+    for (const [cid, author, body, hAgo] of msgs) db.messages.push({ id: ++t0, client_id: cid, author_id: author, body, at: T - hAgo * H });
+    db.messages.sort((a, b) => a.at - b.at).forEach((m, i) => { m.id = i + 1; });
+    db.reads = new Set();
+    for (const m of db.messages) if (m.at < T - 2 * D) for (const u of db.users) if (u.id !== m.author_id) db.reads.add(`${u.id}:${m.id}`);
+  })();
+
   // ---- 添付ファイルの見本（CSV・写真・PDF） ----
   const files = new Map();
   function addFile(clientId, authorId, name, mime, blob, at, caption) {
@@ -216,13 +251,34 @@
   const nextId = () => ++db.seq;
   const err = (status, error) => ({ status, body: { error } });
   const ok = (body) => ({ status: 200, body });
-  const log = (u, action, target) => db.audit.unshift({ id: nextId(), at: Date.now(), action, target, ip: 'デモ', login_id: u?.login_id, name: u?.name });
+  // 操作の記録は、どのケアマネの記録かを持たせる（事業所の操作は、相手のケアマネの記録に入る）
+  const log = (u, action, target, cm) => db.audit.unshift({ id: nextId(), at: Date.now(), action, target, ip: 'デモ', login_id: u?.login_id, name: u?.name, cm: cm ?? u?.cm_id });
   const office = (id) => db.offices.find((o) => o.id === id);
-  const pub = (u) => ({
-    id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must,
-    office: u.office_id ? { id: u.office_id, name: office(u.office_id).name, can_post: office(u.office_id).can_post, service_type: office(u.office_id).service_type } : null,
-  });
-  const visible = (u, c) => !c.archived && (u.role === 'cm' || (c.office_ids.includes(u.office_id) && office(u.office_id).active));
+  const userOf = (id) => db.users.find((x) => x.id === id);
+  // 事業所アカウントが、そのケアマネとつながっていて使える状態か（使えるならそのケアマネ側の事業所を返す）
+  const linkFor = (u, cmId) => {
+    const l = db.links.find((x) => x.user_id === u.id && x.cm_id === cmId && x.status === 'active' && x.active);
+    return l && office(l.office_id)?.active ? l : null;
+  };
+  const activeLinks = (u) => db.links.filter((l) => l.user_id === u.id && linkFor(u, l.cm_id)).sort((a, z) => a.at - z.at);
+  const pub = (u) => {
+    if (u.role === 'cm') return { id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must, office: null };
+    const act = activeLinks(u);
+    const l = act.find((x) => x.cm_id === u.cm_id) || act[0];
+    const o = l ? office(l.office_id) : null;
+    return {
+      id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must,
+      office: o ? { id: o.id, name: o.name, can_post: o.can_post, service_type: o.service_type } : null,
+      links: act.length, pending: db.links.filter((x) => x.user_id === u.id && x.status === 'pending').length,
+    };
+  };
+  const visible = (u, c) => {
+    if (c.archived) return false;
+    if (u.role === 'cm') return c.cm_id === u.cm_id;
+    const l = linkFor(u, c.cm_id);
+    return !!l && c.office_ids.includes(l.office_id);
+  };
+  const postable = (u, c) => u.role === 'cm' || !!office(linkFor(u, c.cm_id)?.office_id)?.can_post;
 
   function handle(method, path, q, b) {
     if (method === 'POST' && path === '/api/login') {
@@ -249,31 +305,33 @@
         const last = ms[ms.length - 1];
         return {
           id: c.id, name: c.name,
+          ...(u.role === 'cm' ? {} : { cm: { id: c.cm_id, name: userOf(c.cm_id).name } }),
           offices: c.office_ids.map((id) => ({ id, name: office(id).name, service_type: office(id).service_type })),
           last_message: last ? last.body.slice(0, 60) : '', last_at: last ? last.at : T - 5 * D,
           unread: ms.filter((m) => m.author_id !== u.id && !db.reads.has(`${u.id}:${m.id}`)).length,
         };
       }).sort((a, z) => z.last_at - a.last_at);
-      return ok({ rooms });
+      if (u.role === 'cm') return ok({ rooms });
+      return ok({ rooms, cms: activeLinks(u).map((l) => ({ id: l.cm_id, name: userOf(l.cm_id).name })) });
     }
     let m;
     if ((m = path.match(/^\/api\/rooms\/(\d+)\/messages$/))) {
       const c = db.clients.find((x) => x.id === Number(m[1]));
       if (!c || !visible(u, c)) return err(404, '見つかりません');
-      const canPost = u.role === 'cm' || office(u.office_id).can_post;
+      const canPost = postable(u, c);
       if (method === 'POST') {
         if (!canPost) return err(403, 'この事業所は閲覧のみです');
         const text = (b.body || '').trim();
         if (!text) return err(400, 'メッセージを入力してください');
         const id = nextId();
         db.messages.push({ id, client_id: c.id, author_id: u.id, body: text, at: Date.now() });
-        log(u, 'message_post', `${c.name} 様`);
+        log(u, 'message_post', `${c.name} 様`, c.cm_id);
         return ok({ ok: true, id });
       }
       const after = Number(q.get('after') || 0);
       const list = db.messages.filter((x) => x.client_id === c.id && x.id > after);
       list.forEach((x) => { if (x.author_id !== u.id) db.reads.add(`${u.id}:${x.id}`); });
-      if (!after) log(u, 'room_view', `${c.name} 様`);
+      if (!after) log(u, 'room_view', `${c.name} 様`, c.cm_id);
       const roomIds = db.messages.filter((x) => x.client_id === c.id).map((x) => x.id);
       const reads = db.users.filter((y) => y.id !== u.id).map((y) => Math.max(0, ...roomIds.filter((id) => db.reads.has(`${y.id}:${id}`)))).filter((x) => x > 0);
       return ok({
@@ -283,12 +341,26 @@
           const a = db.users.find((y) => y.id === x.author_id);
           return {
             id: x.id, body: x.body, created_at: x.at, mine: x.author_id === u.id, author: a.name, author_role: a.role,
-            author_office: a.office_id ? office(a.office_id).name : '',
+            author_office: a.role === 'provider' ? office(db.links.find((l) => l.user_id === a.id && l.cm_id === c.cm_id)?.office_id)?.name || '' : '',
             file: files.has(x.id) ? (({ id, name, mime, size }) => ({ id, name, mime, size }))(files.get(x.id)) : null,
             read_count: x.author_id === u.id ? db.users.filter((y) => y.id !== u.id && db.reads.has(`${y.id}:${x.id}`)).length : null,
           };
         }),
       });
+    }
+    if (u.role === 'provider' && path === '/api/links') {
+      return ok({ links: db.links.filter((l) => l.user_id === u.id).sort((a, z) => (a.status === 'pending' ? 0 : 1) - (z.status === 'pending' ? 0 : 1) || a.at - z.at).map((l) => {
+        const o = office(l.office_id);
+        return { cm_id: l.cm_id, cm_name: userOf(l.cm_id).name, office_name: o?.name || '', status: l.status, active: !!(l.active && o?.active), can_post: !!o?.can_post, home: l.cm_id === u.cm_id, created_at: l.at };
+      }) });
+    }
+    if (u.role === 'provider' && (m = path.match(/^\/api\/links\/(\d+)\/(accept|remove)$/))) {
+      const l = db.links.find((x) => x.user_id === u.id && x.cm_id === Number(m[1]));
+      if (!l) return err(404, '見つかりません');
+      const was = l.status;
+      if (m[2] === 'accept') l.status = 'active'; else db.links.splice(db.links.indexOf(l), 1);
+      log(u, m[2] === 'accept' ? 'link_accept' : (was === 'pending' ? 'link_reject' : 'link_remove'), u.login_id, l.cm_id);
+      return ok({ ok: true });
     }
     if (u.role !== 'cm') return err(403, 'この操作はケアマネジャーのみ可能です');
     // 事業所の名簿（デモでは、どの県・種別でも同じ見本を出します）
@@ -309,55 +381,84 @@
       return ok({ ok: true });
     }
     if (path === '/api/offices' && method === 'GET') {
-      return ok({ offices: db.offices.map((o) => ({ ...o, client_count: db.clients.filter((c) => !c.archived && c.office_ids.includes(o.id)).length })) });
+      return ok({ offices: db.offices.filter((o) => o.cm_id === u.cm_id).map((o) => ({ ...o, client_count: db.clients.filter((c) => !c.archived && c.office_ids.includes(o.id)).length })) });
     }
     if (path === '/api/offices' && method === 'POST') {
       if (!b.name?.trim()) return err(400, '事業所名を入力してください');
-      const id = nextId(); db.offices.push({ id, name: b.name.trim(), service_type: b.service_type || 'その他', can_post: !!b.can_post, active: true }); log(u, 'office_create', b.name);
+      const id = nextId(); db.offices.push({ id, cm_id: u.cm_id, name: b.name.trim(), service_type: b.service_type || 'その他', can_post: !!b.can_post, active: true }); log(u, 'office_create', b.name);
       return ok({ ok: true, id });
     }
     if ((m = path.match(/^\/api\/offices\/(\d+)$/))) {
-      const o = office(Number(m[1])); if (!o) return err(404, '見つかりません');
+      const o = office(Number(m[1])); if (!o || o.cm_id !== u.cm_id) return err(404, '見つかりません');
       if (b.name != null) o.name = b.name.trim();
       if (b.can_post != null) o.can_post = !!b.can_post;
       if (b.service_type != null) o.service_type = b.service_type;
-      if (b.active != null) { o.active = !!b.active; if (!o.active) db.users.filter((x) => x.office_id === o.id).forEach((x) => { x.active = false; }); }
+      if (b.active != null) o.active = !!b.active;
       log(u, 'office_update', o.name); return ok({ ok: true });
     }
-    if (path === '/api/clients' && method === 'GET') return ok({ clients: db.clients.map((c) => ({ ...c })).sort((a, z) => a.archived - z.archived) });
+    if (path === '/api/clients' && method === 'GET') return ok({ clients: db.clients.filter((c) => c.cm_id === u.cm_id).map((c) => ({ ...c })).sort((a, z) => a.archived - z.archived) });
     if (path === '/api/clients' && method === 'POST') {
       if (!b.name?.trim()) return err(400, '利用者名を入力してください');
-      const id = nextId(); db.clients.push({ id, name: b.name.trim(), note: b.note || '', archived: false, office_ids: b.office_ids || [] }); log(u, 'client_create', b.name);
+      const id = nextId(); db.clients.push({ id, cm_id: u.cm_id, name: b.name.trim(), note: b.note || '', archived: false, office_ids: b.office_ids || [] }); log(u, 'client_create', b.name);
       return ok({ ok: true, id });
     }
     if ((m = path.match(/^\/api\/clients\/(\d+)$/))) {
-      const c = db.clients.find((x) => x.id === Number(m[1])); if (!c) return err(404, '見つかりません');
+      const c = db.clients.find((x) => x.id === Number(m[1])); if (!c || c.cm_id !== u.cm_id) return err(404, '見つかりません');
       if (b.name != null) c.name = b.name.trim();
       if (b.note != null) c.note = b.note;
       if (b.archived != null) c.archived = !!b.archived;
       if (b.office_ids != null) c.office_ids = b.office_ids;
       log(u, 'client_update', c.name); return ok({ ok: true });
     }
+    const others = (x) => db.links.filter((l) => l.user_id === x.id && l.cm_id !== u.cm_id && l.status === 'active').length;
     if (path === '/api/accounts' && method === 'GET') {
-      return ok({ accounts: db.users.filter((x) => x.role === 'provider').map((x) => {
-        const l = db.audit.find((a) => a.login_id === x.login_id && a.action === 'login_success');
-        return { id: x.id, login_id: x.login_id, name: x.name, office_id: x.office_id, active: x.active, locked: false, last_login: l ? l.at : null };
+      return ok({ accounts: db.links.filter((l) => l.cm_id === u.cm_id).sort((a, z) => a.at - z.at).map((l) => {
+        const x = userOf(l.user_id);
+        const last = db.audit.find((a) => a.login_id === x.login_id && a.action === 'login_success');
+        return { id: x.id, login_id: x.login_id, name: x.name, office_id: l.office_id, status: l.status, active: !!(l.active && x.active), locked: false, home: x.cm_id === u.cm_id, shared: others(x) > 0, last_login: last ? last.at : (l.status === 'active' ? T - 3 * H : null) };
       }) });
     }
     if (path === '/api/accounts' && method === 'POST') {
-      if (!/^[A-Za-z0-9._-]{4,64}$/.test(b.login_id || '')) return err(400, 'ログインIDは半角英数字4文字以上にしてください');
-      if (db.users.some((x) => x.login_id === b.login_id)) return err(409, 'このログインIDは使われています');
+      const lid = String(b.login_id || '').normalize('NFKC').trim();
+      if (!/^[A-Za-z0-9._-]{4,64}$/.test(lid)) return err(400, 'ログインIDは、半角の英字・数字で4文字以上にしてください（例：1234）');
+      const ex = db.users.find((x) => x.login_id === lid);
+      if (ex) return err(409, ex.role === 'provider' ? 'このログインIDは、すでに発行されています。同じ事業所なら「発行済みのIDとつなぐ」を使ってください' : 'このログインIDは使われています');
       if (!b.name?.trim()) return err(400, '担当者名を入力してください');
-      const id = nextId(); db.users.push({ id, role: 'provider', cm_id: 1, office_id: b.office_id, login_id: b.login_id, name: b.name.trim(), pw: b.password, must: true, active: true });
-      log(u, 'account_create', b.login_id); return ok({ ok: true, id });
+      const id = nextId(); db.users.push({ id, role: 'provider', cm_id: u.cm_id, office_id: b.office_id, login_id: lid, name: b.name.trim(), pw: b.password, must: true, active: true });
+      db.links.push({ user_id: id, cm_id: u.cm_id, office_id: b.office_id, status: 'active', active: true, at: Date.now() });
+      log(u, 'account_create', lid); return ok({ ok: true, id });
+    }
+    if (path === '/api/accounts/link' && method === 'POST') {
+      const lid = String(b.login_id || '').normalize('NFKC').trim();
+      const x = db.users.find((y) => y.login_id === lid && y.role === 'provider' && y.active);
+      if (!x) return err(404, 'このログインIDの事業所アカウントは見つかりません。IDを事業所に確認してください');
+      const ex = db.links.find((l) => l.user_id === x.id && l.cm_id === u.cm_id);
+      if (ex) return err(409, ex.status === 'pending' ? 'すでに依頼しています。事業所の承認を待っています' : 'すでにつながっています');
+      db.links.push({ user_id: x.id, cm_id: u.cm_id, office_id: b.office_id, status: 'pending', active: true, at: Date.now() });
+      log(u, 'account_link_request', lid); return ok({ ok: true, id: x.id });
     }
     if ((m = path.match(/^\/api\/accounts\/(\d+)$/))) {
-      const x = db.users.find((y) => y.id === Number(m[1]) && y.role === 'provider'); if (!x) return err(404, '見つかりません');
-      if (b.password != null) { x.pw = b.password; x.must = true; log(u, 'account_reset_pw', x.login_id); }
-      if (b.active != null) { x.active = !!b.active; log(u, b.active ? 'account_enable' : 'account_disable', x.login_id); }
+      const l = db.links.find((y) => y.user_id === Number(m[1]) && y.cm_id === u.cm_id);
+      const x = l && userOf(l.user_id);
+      if (!x) return err(404, '見つかりません');
+      const home = x.cm_id === u.cm_id;
+      if (b.remove) {
+        if (home) return err(400, 'このケアマネが発行したアカウントです。使わなくなったら「停止」してください');
+        db.links.splice(db.links.indexOf(l), 1); log(u, 'account_unlink', x.login_id); return ok({ ok: true });
+      }
+      if (b.password != null) {
+        if (!home) return err(403, 'パスワードの再発行は、このアカウントを発行したケアマネジャーだけができます');
+        if (others(x)) return err(403, 'ほかのケアマネジャーともつながっているため、ここでは再発行できません。事業所の方ご自身で「パスワード変更」をしてもらってください');
+        x.pw = b.password; x.must = true; log(u, 'account_reset_pw', x.login_id);
+      }
+      if (b.active != null) {
+        l.active = !!b.active;
+        if (home && !others(x)) x.active = !!b.active;
+        log(u, b.active ? 'account_enable' : 'account_disable', x.login_id);
+      }
       return ok({ ok: true });
     }
-    if (path === '/api/audit') return ok({ logs: db.audit.slice(0, 100) });
+    if (path === '/api/audit') return ok({ logs: db.audit.filter((a) => a.cm === u.cm_id).slice(0, 100) });
     return err(404, '見つかりません');
   }
 
@@ -374,13 +475,13 @@
       const f = [...files.values()].find((x) => x.id === Number(m[1]));
       const c = f && db.clients.find((x) => x.id === f.client_id);
       if (!session || !f || !visible(session, c)) return jsonRes(err(404, '見つかりません'));
-      log(session, 'file_view', `${c.name} 様`);
+      log(session, 'file_view', `${c.name} 様`, c.cm_id);
       return new Response(f.blob, { status: 200, headers: { 'Content-Type': f.mime } });
     }
     if ((m = path.match(/^\/api\/rooms\/(\d+)\/attachments$/)) && method === 'POST') {
       const u = session; const c = db.clients.find((x) => x.id === Number(m[1]));
       if (!u || !c || !visible(u, c)) return jsonRes(err(404, '見つかりません'));
-      if (u.role !== 'cm' && !office(u.office_id).can_post) return jsonRes(err(403, 'この事業所は閲覧のみです'));
+      if (!postable(u, c)) return jsonRes(err(403, 'この事業所は閲覧のみです'));
       const hd = init.headers || {};
       const blob = init.body instanceof Blob ? init.body : new Blob([init.body]);
       if (blob.size > 5 * 1024 * 1024) return jsonRes(err(413, 'ファイルは5MBまでです'));
@@ -389,7 +490,7 @@
       addFile(c.id, u.id, name, hd['Content-Type'], new Blob([blob], { type: hd['Content-Type'] }), Date.now(), caption);
       const mid = db.messages[db.messages.length - 1].id;
       db.reads.add(`${u.id}:${mid}`);
-      log(u, 'file_upload', `${c.name} 様`);
+      log(u, 'file_upload', `${c.name} 様`, c.cm_id);
       return jsonRes(ok({ ok: true, id: mid }));
     }
     return jsonRes(handle(method, path, new URLSearchParams(qs || ''), init.body ? JSON.parse(init.body) : {}));

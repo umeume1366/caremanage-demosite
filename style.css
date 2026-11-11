@@ -449,3 +449,15 @@ label.check input { flex: none; }
 .demo-logins { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin: .7rem 0; }
 .demo-logins .btn { min-height: 2.6rem; padding: .3rem .5rem; font-size: .9rem; }
 .demo-logins .btn:first-child { grid-column: 1 / -1; }
+
+/* ---------- 事業所IDの共有（複数のケアマネとつながる） ---------- */
+.notice { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: .5rem; padding: .7rem 1rem; border: 0; border-bottom: 2px solid var(--brand-edge, #e0b800); background: var(--brand-soft, #fff8d6); color: var(--brand-ink, #5a4200); font-weight: 700; text-align: left; cursor: pointer; }
+.notice[hidden] { display: none; }
+.notice .go { white-space: nowrap; text-decoration: underline; }
+.tag.wait { background: #fff1c9; color: #6b4a00; }
+.tag.cmtag { background: var(--brand-soft, #fff8d6); color: var(--brand-ink, #5a4200); }
+.card.pending { border-color: var(--brand-edge, #e0b800); background: var(--brand-soft, #fff8d6); }
+.rowline.wide { margin: 0 0 1rem; }
+.rowline.wide .btn { flex: 1 1 12rem; }
+.menu .badge { margin-left: .4rem; }
+.typebar[hidden] { display: none; }
