@@ -1,6 +1,9 @@
-// ケアつなぎ フロントエンド（ビルド不要・外部ライブラリなし）
+// ケアブル フロントエンド（ビルド不要・外部ライブラリなし）
 (() => {
   'use strict';
+
+  // ほかのサイトの中に埋め込まれているときは動かさない（config.js で判定）
+  if (window.APP_CONFIG && window.APP_CONFIG.BLOCKED) return;
 
   const API = (window.APP_CONFIG && window.APP_CONFIG.API_BASE || '').replace(/\/+$/, '');
   const app = document.getElementById('app');
@@ -23,9 +26,134 @@
   function safeSet(store, k, v) { try { v == null ? store.removeItem(k) : store.setItem(k, v); } catch { /* 無視 */ } }
 
   // ---------- 文字サイズ ----------
-  const SIZES = [['large', '大'], ['normal', '通常']];
-  function applySize(s) { document.documentElement.dataset.size = s; safeSet(localStorage, 'size', s); }
-  applySize(safeGet(localStorage, 'size') === 'normal' ? 'normal' : 'large');
+  // 押すたびに 通常 → 大 → 特大 → 通常… と切り替わる。ログインしている人ごとにサーバーへ保存し、次回もその大きさで開く
+  const SIZES = [['normal', '通常'], ['large', '大'], ['xlarge', '特大']];
+  const sizeOk = (v) => SIZES.some(([k]) => k === v);
+  function applySize(s) {
+    if (!sizeOk(s)) s = 'large';
+    document.documentElement.dataset.size = s; safeSet(localStorage, 'size', s);
+    document.querySelectorAll('.sizebtn .cur').forEach((x) => { x.textContent = sizeLabel(); });
+    document.querySelectorAll('.sizebtn').forEach((x) => { x.setAttribute('aria-label', `文字の大きさ（いまは${sizeLabel()}。押すと切り替わります）`); });
+  }
+  function sizeLabel() { return (SIZES.find(([k]) => k === document.documentElement.dataset.size) || SIZES[1])[1]; }
+  applySize(safeGet(localStorage, 'size') || 'large');
+  // ログインした人の設定を画面に反映
+  function useUserSize(u) { if (u && sizeOk(u.font_size)) applySize(u.font_size); }
+
+  // ---------- アプリとして使う（PWA：ホーム画面に追加） ----------
+  // ・Android（Chrome など）：ボタンを押すと、その場で「インストール」の確認が出る
+  //   ※ Chrome の決まりで、ページを開いてから30秒ほどたたないと確認を出せない。そのあいだは「準備中」と表示して待つ
+  // ・iPhone / iPad：Apple の決まりで、ボタンから直接は追加できない。共有ボタンからの3つの手順を、使っているブラウザに合わせて案内する
+  // ・LINE などの「アプリの中の画面」：ホーム画面に追加できないので、Chrome / Safari で開き直す案内を出す
+  let installEvent = null;
+  const installWaiters = new Set();
+  const UA = navigator.userAgent;
+  const isApp = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = () => /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = () => /Android/i.test(UA);
+  function inAppName() {
+    if (/\bLine\//i.test(UA)) return 'LINE';
+    if (/FBAN|FBAV|FB_IAB/.test(UA)) return 'Facebook';
+    if (/Instagram/i.test(UA)) return 'Instagram';
+    if (/MicroMessenger|KAKAOTALK|Twitter/i.test(UA)) return 'アプリ';
+    if (isAndroid() && /; wv\)/.test(UA)) return 'アプリ';
+    if (isIOS() && !/Safari\//.test(UA)) return 'アプリ';
+    return '';
+  }
+  addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; installWaiters.forEach((fn) => fn()); });
+  addEventListener('appinstalled', () => { installEvent = null; document.querySelectorAll('.overlay.install').forEach((o) => o.remove()); toast('ホーム画面に追加しました'); });
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { /* 使えなくても画面は動く */ }); });
+  }
+  // その場で「インストール」の確認を出す
+  async function promptInstall() {
+    const ev = installEvent; installEvent = null;
+    if (!ev) return;
+    try {
+      ev.prompt();
+      const choice = await ev.userChoice;
+      if (choice && choice.outcome === 'dismissed') toast('追加をやめました。もう一度押すと追加できます');
+    } catch { /* 無視 */ }
+  }
+  const stepList = (steps) => h('ol', { class: 'steps' }, steps.map((t) => h('li', null, t)));
+  const shareIcon = () => h('span', { class: 'ico-share', role: 'img', 'aria-label': '共有ボタン（四角から上向きの矢印が出ているマーク）' });
+  function pageUrl() { return location.href.split('#')[0]; }
+  function urlBox() {
+    const box = h('input', { type: 'text', readonly: true, class: 'urlbox', value: pageUrl(), 'aria-label': 'このページのアドレス', onfocus: (e) => e.target.select() });
+    const btn = h('button', { type: 'button', class: 'btn secondary block', onclick: async () => {
+      try { await navigator.clipboard.writeText(pageUrl()); toast('アドレスをコピーしました'); } catch { box.focus(); box.select(); toast('アドレスを長押ししてコピーしてください'); }
+    } }, 'アドレスをコピーする');
+    return h('div', { class: 'urlrow' }, box, btn);
+  }
+  function installDialog(body, actions) {
+    const close = dialog('ホーム画面に追加', body, actions);
+    const ov = [...document.querySelectorAll('.overlay')].pop();
+    if (ov) ov.classList.add('install');
+    return close;
+  }
+
+  function installApp() {
+    // 1) すぐに追加できる状態（Android の Chrome・パソコンの Chrome / Edge など）
+    if (installEvent) return promptInstall();
+
+    // 2) LINE などのアプリの中で開いている
+    const inApp = inAppName();
+    if (inApp) {
+      const name = inApp === 'アプリ' ? 'ほかのアプリ' : inApp;
+      const target = isIOS() ? 'Safari' : 'Chrome';
+      const u = pageUrl();
+      const open = inApp === 'LINE'
+        ? h('a', { class: 'btn block', href: u + (u.includes('?') ? '&' : '?') + 'openExternalBrowser=1' }, `${target} などのブラウザで開く`)
+        : isAndroid()
+          ? h('a', { class: 'btn block', href: 'intent://' + u.replace(/^https?:\/\//, '') + '#Intent;scheme=https;package=com.android.chrome;end' }, 'Chrome で開く')
+          : null;
+      return installDialog(h('div', null,
+        h('p', null, `いまは ${name} の中の画面で開いています。このままでは、ホーム画面に追加できません。`),
+        h('p', null, h('b', null, `${target} で開き直すと、追加できます。`)),
+        open ? h('p', null, open) : null,
+        h('p', { class: 'hint' }, open ? 'うまく開かないときは、下のアドレスをコピーして、' + target + ' のアドレス欄に貼り付けてください。' : `下のアドレスをコピーして、${target} のアドレス欄に貼り付けてください。画面のすみのメニューに「${target} で開く」「ブラウザで開く」があれば、それでも開けます。`),
+        urlBox()),
+      (close) => [h('button', { class: 'btn secondary', onclick: close }, '閉じる')]);
+    }
+
+    // 3) iPhone / iPad（Apple の決まりで、ボタンからは直接追加できない）
+    if (isIOS()) {
+      const chrome = /CriOS|EdgiOS/.test(UA);
+      const other = /FxiOS|OPiOS|DuckDuckGo/.test(UA);
+      const steps = chrome
+        ? [['アドレス欄の右はしにある ', shareIcon(), ' を押します。'], ['出てきたメニューを下へ動かして「ホーム画面に追加」を押します。'], ['右上の「追加」を押します。']]
+        : [['画面の下にある ', shareIcon(), ' を押します。', h('span', { class: 'hint' }, '（見当たらないときは「…」を押すと出てきます。iPad は画面の上にあります）')], ['出てきたメニューを下へ動かして「ホーム画面に追加」を押します。'], ['右上の「追加」を押します。']];
+      return installDialog(h('div', null,
+        h('p', null, 'iPhone・iPad は、次の3つの手順でホーム画面に追加できます。'),
+        other ? h('p', { class: 'testnote' }, 'このブラウザでは追加できないことがあります。Safari で開くと確実です。') : null,
+        stepList(steps),
+        h('p', { class: 'hint' }, 'ホーム画面に「ケアブル」のアイコンができ、次からはアプリのように開けます。'),
+        other ? urlBox() : null),
+      (close) => [h('button', { class: 'btn', onclick: close }, 'わかりました')]);
+    }
+
+    // 4) Android・パソコン：準備ができしだい、ボタンが押せるようになる
+    const status = h('p', { class: 'installwait', role: 'status' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), '準備しています… 30秒ほどで下のボタンが押せるようになります。');
+    const addBtn = h('button', { type: 'button', class: 'btn block', disabled: true }, 'ホーム画面に追加する');
+    const ready = () => {
+      if (!addBtn.isConnected) { installWaiters.delete(ready); return; }
+      status.className = 'installwait ok'; status.textContent = '✓ 準備ができました。下のボタンを押してください。';
+      addBtn.disabled = false; addBtn.focus();
+    };
+    const manual = isAndroid()
+      ? ['画面の右上（または右下）の「︙」を押します。', '「ホーム画面に追加」または「アプリをインストール」を押します。', '「インストール」または「追加」を押します。']
+      : ['アドレス欄の右はしにあるインストールのマーク（パソコンに↓の絵）を押します。', '見当たらないときは、右上の「︙」→「キャスト、保存、共有」→「ページをアプリとしてインストール」を押します。', '「インストール」を押します。'];
+    const closeDlg = installDialog(h('div', null,
+      status, h('p', null, addBtn),
+      h('details', { class: 'installhelp' },
+        h('summary', null, 'ボタンが押せるようにならないとき'),
+        h('p', { class: 'hint' }, 'すでに追加してある場合は、ボタンは押せるようになりません。ホーム画面の「ケアブル」のアイコンから開いてください。'),
+        h('p', { class: 'hint' }, 'まだ追加していない場合は、次の手順でも追加できます。'),
+        stepList(manual))),
+    (close) => [h('button', { class: 'btn secondary', onclick: () => { installWaiters.delete(ready); close(); } }, '閉じる')]);
+    addBtn.addEventListener('click', async () => { installWaiters.delete(ready); closeDlg(); await promptInstall(); });
+    installWaiters.add(ready);
+  }
 
   // ---------- DOM ヘルパー（textContent のみ使用：画面への不正なHTML挿入を防ぐ） ----------
   function h(tag, attrs, ...children) {
@@ -53,9 +181,7 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => { t.className = ''; }, 3200);
   }
-  function clearTimers() { S.timers.forEach(clearInterval); S.timers = []; }
-  // 画面が見えていないとき（別アプリ・別タブ）は通信しない：サーバーの負荷と通信量を節約
-  function every(ms, fn) { S.timers.push(setInterval(() => { if (!document.hidden) fn(); }, ms)); }
+  function clearTimers() { S.timers.forEach(clearInterval); S.timers = []; S.refresh = null; }
 
   // ログインID：全角で入力された英数字（１２３４ など）を半角に直し、前後の空白を取る
   const normId = (v) => String(v || '').normalize('NFKC').replace(/\s+/g, '');
@@ -76,12 +202,16 @@
   function fmtFull(ms) { const d = new Date(ms); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${fmtTime(ms)}`; }
 
   // ---------- API ----------
-  async function api(method, path, body) {
+  // passive: 合図を受けて自動で取り直す通信。サーバーは「人が操作した」とは見なさない（自動ログアウトの時間が延びない）
+  //   画面が見えているときは「2」（本人が見た）、裏にあるときは「1」（まだ見ていない＝通知のまとめを続ける）
+  async function api(method, path, body, { passive } = {}) {
     let res;
+    P.last = Date.now();
+    const pv = passive ? (document.visibilityState === 'visible' ? '2' : '1') : '';
     try {
       res = await fetch(API + path, {
         method,
-        headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(pv ? { 'X-Careble-Passive': pv } : {}), ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         credentials: 'omit',
         cache: 'no-store',
@@ -102,7 +232,11 @@
   function logoutLocal(msg) {
     clearTimers();
     S.token = null; S.user = null; S.q = ''; S.svc = 'all'; S.clientDraft = null;
-    blobCache.clear();
+    blobCache.clear(); dropUrls();
+    P.synced = false; P.on = false; setTitle(0);
+    // 開いたままの写真・PDF・ダイアログを画面から消す（ログアウト後に利用者の情報が残らないように）
+    document.querySelectorAll('.overlay').forEach((o) => o.remove());
+    app.style.height = '';
     safeSet(sessionStorage, 'token', null);
     if (MEM) memHash = '#/';
     else if (location.hash) history.replaceState(null, '', location.pathname);
@@ -111,12 +245,183 @@
 
   // 無操作で自動ログアウト（共有端末での覗き見対策）
   ['pointerdown', 'keydown', 'touchstart'].forEach((ev) => addEventListener(ev, () => { S.lastActive = Date.now(); }, { passive: true }));
-  setInterval(() => {
+  function idleCheck() {
     if (S.token && Date.now() - S.lastActive > IDLE_LOGOUT_MS) {
       api('POST', '/api/logout').catch(() => {});
       logoutLocal('30分間操作がなかったため、自動でログアウトしました');
     }
-  }, 30 * 1000);
+  }
+  setInterval(idleCheck, 30 * 1000);
+  // スリープや別アプリから戻ってきたときは、すぐに確認する（タイマーが止まっていても見逃さない）
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) idleCheck(); });
+
+  // ---------- 新しい連絡の受け取り方 ----------
+  // 考え方：画面からサーバーへ「新しい連絡はある？」と定期的に聞きに行くのは、やめました。
+  // ・連絡が書かれた瞬間に、サーバーがこの端末へ「合図」を1回だけ送ります（Web Push）。
+  //   合図の待ち受けはブラウザ自身が行うので、待っているあいだ、ケアブルのサーバーとの通信はゼロです
+  // ・合図には中身がありません。利用者の名前も本文も、途中の配達所には渡りません
+  // ・合図が届いたとき：画面を見ている → 画面だけを最新にする（通知は出さない）
+  //                    見ていない・タブを閉じている → 「新しい連絡があります」と通知する
+  // ・サーバーに確認に行くのは「合図が来たとき」「この画面に戻ってきたとき」「自分で操作したとき」だけ
+  // ・合図を受け取れないとき（通知をオフ・対応していないブラウザ）だけ、画面を見ているあいだ、ゆっくり確認します
+  const APP_TITLE = 'ケアブル';
+  const SAFETY_MS = 10 * 60 * 1000; // 合図を受け取れる端末でも、念のため10分に1回は確認する（画面を見ているときだけ）
+  const P = { on: false, synced: false, busy: false, at: 0, last: 0 };
+  function setTitle(n) {
+    document.title = n > 0 ? `(${n > 99 ? '99+' : n}) ${APP_TITLE}` : APP_TITLE;
+    // ホーム画面に追加して使っているときは、アイコンにも数を出す（対応している端末のみ）
+    try { if (navigator.setAppBadge) (n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch { /* 無視 */ }
+  }
+  const DEMO = API === 'demo';
+  const pushSupported = () => window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const notifyKey = () => 'notify:' + (S.user ? S.user.id : '');
+  const wantsPush = () => safeGet(localStorage, notifyKey()) === '1';
+  function u8(b64) {
+    const t = String(b64).replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(t + '==='.slice((t.length + 3) % 4));
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  }
+  function sameKey(sub, key) {
+    try {
+      const a = new Uint8Array(sub.options.applicationServerKey), b = u8(key);
+      return a.length === b.length && a.every((x, i) => x === b[i]);
+    } catch { return false; }
+  }
+  function swReady() {
+    return Promise.race([navigator.serviceWorker.ready, new Promise((_, ng) => setTimeout(() => ng(new Error('準備ができませんでした。ページを再読み込みしてください')), 8000))]);
+  }
+  // この端末を「合図の届け先」にする。すでに登録済みで変わりがなければ、通信はしない
+  async function pushOn(key) {
+    if (DEMO) { await api('POST', '/api/push/subscribe', { endpoint: 'demo' }); P.on = true; return; }
+    const reg = await swReady();
+    let sub = await reg.pushManager.getSubscription();
+    key = key || S.pushKey || (await api('GET', '/api/push/key')).key;
+    S.pushKey = key;
+    if (sub && !sameKey(sub, key)) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    if (!sub) {
+      try { sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(key) }); } catch { throw new Error('このブラウザでは通知を登録できませんでした'); }
+    }
+    const mark = `${S.user.id}|${sub.endpoint}`;
+    if (safeGet(localStorage, 'push_ep') !== mark) {
+      await api('POST', '/api/push/subscribe', { endpoint: sub.endpoint });
+      safeSet(localStorage, 'push_ep', mark);
+    }
+    P.on = true;
+  }
+  // この端末への合図をやめる（ログアウトしたとき・通知をオフにしたとき）
+  async function pushOff() {
+    P.on = false;
+    safeSet(localStorage, 'push_ep', null);
+    if (DEMO) { await api('POST', '/api/push/unsubscribe', { endpoint: 'demo' }).catch(() => {}); return; }
+    if (!pushSupported()) return;
+    try {
+      const reg = await swReady();
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { await api('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+    } catch { /* 無視 */ }
+  }
+  // ログインした直後・画面に戻ってきたとき：通知をオンにしている人なら、届け先が生きているかを確かめる（ふだんは通信なし）
+  async function syncPush() {
+    if (!S.user || S.user.must_change_pw || !wantsPush()) { P.on = false; return; }
+    if (!DEMO && (!pushSupported() || Notification.permission !== 'granted')) { P.on = false; return; }
+    try { await pushOn(S.pushKey); } catch { P.on = false; }
+  }
+  async function checkUnread(force) {
+    if (!S.token || !S.user || S.user.must_change_pw || P.busy) return;
+    if (!force && Date.now() - P.at < 10000) return; // 画面を切り替えるたびに聞きすぎない
+    P.busy = true; P.at = Date.now();
+    try {
+      const r = await api('GET', '/api/unread', null, { passive: true });
+      if (S.token) setTitle(r.unread);
+    } catch { /* 取れなくても画面はそのまま使える */ } finally { P.busy = false; }
+  }
+  // 合図が届いた／画面に戻ってきた：未読の数と、いま開いている画面を1回だけ取り直す
+  function refreshNow() {
+    if (!S.token || !S.user) return;
+    checkUnread(true);
+    if (S.refresh) S.refresh(true);
+  }
+  // 画面の自動更新の予備。合図を受け取れる端末では10分に1回まで、受け取れない端末では plainMs ごと（どちらも画面を見ているときだけ）
+  function watch(plainMs, fn) {
+    S.timers.push(setInterval(() => {
+      if (document.hidden) return;
+      const gap = Date.now() - P.last;
+      if (P.on ? gap >= SAFETY_MS : gap >= plainMs - 500) fn(true);
+    }, Math.min(plainMs, 20000)));
+  }
+  // サービスワーカーから「合図が届いた」と知らせが来たら
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const t = e.data && e.data.type;
+      if (t === 'careble:new') refreshNow();
+      if (t === 'careble:resub') { safeSet(localStorage, 'push_ep', null); syncPush(); }
+    });
+  }
+  // デモ：サーバーの代わりに、ブラウザの中で合図をまねする
+  function localNotice(body) {
+    try { const nt = new Notification(APP_TITLE, { body, tag: 'careble-new', icon: 'icon-192.png' }); nt.onclick = () => { window.focus(); nt.close(); }; } catch { /* 無視 */ }
+  }
+  addEventListener('careble-signal', () => {
+    if (!P.on) return;
+    if ((document.hidden || !document.hasFocus()) && 'Notification' in window && Notification.permission === 'granted') localNotice('新しい連絡があります。開いて確認してください');
+    refreshNow();
+  });
+  // ほかのタブ・ほかのソフトから戻ってきたら、すぐに数と画面を最新にする
+  addEventListener('focus', () => { if (S.token && Date.now() - P.last > 3000) refreshNow(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !S.token) return;
+    refreshNow();
+    syncPush();
+  });
+
+  // 通知のオン・オフ（メニュー・一覧の案内から）
+  function blockedHelp() {
+    dialog('通知がブロックされています', h('div', null,
+      h('p', null, 'このブラウザで、ケアブルの通知が「ブロック」になっています。次の手順で「許可」に変えると、使えるようになります。'),
+      h('ol', { class: 'steps' },
+        h('li', null, 'アドレス欄の左はしにあるマーク（鍵や設定の絵）を押します。'),
+        h('li', null, '「通知」を「許可」に変えます。'),
+        h('li', null, 'このページを再読み込みして、もう一度このボタンを押します。'))),
+    (close) => [h('button', { class: 'btn', onclick: close }, 'わかりました')]);
+  }
+  async function toggleNotify() {
+    if (!DEMO && !pushSupported()) {
+      dialog('このブラウザは通知に対応していません', h('p', null, 'パソコンの Chrome・Edge・Firefox・Safari でケアブルを開くと、通知を受け取れます。'),
+        (close) => [h('button', { class: 'btn', onclick: close }, 'わかりました')]);
+      return;
+    }
+    if ('Notification' in window && Notification.permission === 'denied') { blockedHelp(); return; }
+    if (P.on) {
+      safeSet(localStorage, notifyKey(), null);
+      await pushOff();
+      toast('このパソコンへの通知をオフにしました'); route(); return;
+    }
+    let perm = 'Notification' in window ? Notification.permission : 'default';
+    if (perm !== 'granted' && 'Notification' in window) { try { perm = await Notification.requestPermission(); } catch { perm = 'default'; } }
+    if (perm !== 'granted' && !DEMO) { if (perm === 'denied') blockedHelp(); else toast('通知が許可されませんでした', true); route(); return; }
+    try { await pushOn(); } catch (ex) { toast(ex.message, true); route(); return; }
+    safeSet(localStorage, notifyKey(), '1');
+    toast('通知をオンにしました。ケアブルを閉じていても届きます');
+    route();
+  }
+  function notifyHint() {
+    if (!DEMO && !pushSupported()) return 'このブラウザは対応していません（パソコンの Chrome・Edge・Firefox・Safari で使えます）';
+    if ('Notification' in window && Notification.permission === 'denied') return 'ブラウザでブロックされています。押すと直し方が出ます';
+    if (P.on) return 'ケアブルを閉じていても、ブラウザが起動していれば届きます。ログアウトすると、このパソコンには届かなくなります。押すとオフ';
+    return '押すとオンにできます。ほかの作業中やケアブルを閉じているときも、新しい連絡に気づけます';
+  }
+  // 一覧の上に出す案内（通知をまだオンにしていない人だけ。「あとで」を押したら7日間出さない）
+  function notifyInvite() {
+    if (P.on || (!DEMO && !pushSupported()) || ('Notification' in window && Notification.permission === 'denied')) return null;
+    if (Number(safeGet(localStorage, 'notify_later') || 0) > Date.now()) return null;
+    const box = h('div', { class: 'invite', role: 'note' },
+      h('div', { class: 'invite-text' }, h('b', null, '🔔 新しい連絡を、通知で受け取れます'), h('br'),
+        h('span', null, 'ケアブルを閉じていても、連絡が届いた瞬間にパソコンの画面のすみでお知らせします。')),
+      h('div', { class: 'invite-btns' },
+        h('button', { class: 'btn', type: 'button', onclick: toggleNotify }, 'オンにする'),
+        h('button', { class: 'btn secondary', type: 'button', onclick: () => { safeSet(localStorage, 'notify_later', String(Date.now() + 7 * 864e5)); box.remove(); } }, 'あとで')));
+    return box;
+  }
 
   // ---------- 画面共通 ----------
   function topbar(title, { back, sub, right, dog } = {}) {
@@ -132,13 +437,34 @@
 
   function dialog(title, body, actions) {
     const ov = h('div', { class: 'overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': title });
-    const close = () => ov.remove();
+    const opener = document.activeElement;
+    const esc = (e) => { if (e.key === 'Escape' && ov === [...document.querySelectorAll('.overlay')].pop()) close(); };
+    const close = () => { ov.remove(); document.removeEventListener('keydown', esc); if (opener && opener.isConnected) opener.focus(); };
     ov.append(h('div', { class: 'dialog' }, h('h2', null, title), body, h('div', { class: 'actions' }, actions(close))));
     ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    document.addEventListener('keydown', esc);
     document.body.append(ov);
-    const first = ov.querySelector('input, textarea, select');
+    const first = ov.querySelector('input:not([readonly]), textarea, select');
     if (first) first.focus();
     return close;
+  }
+
+  // 削除の確認：「削除します」にチェックを入れてから押す（うっかり押しを防ぐ）
+  function confirmDelete(title, lines, run) {
+    const chk = h('input', { type: 'checkbox' });
+    const err = h('p', { class: 'error' });
+    dialog('削除の確認', h('div', null,
+      h('p', null, h('b', null, title)),
+      h('ul', { class: 'warnlist' }, lines.map((l) => h('li', null, l))),
+      h('label', { class: 'check' }, chk, ' 内容を確認しました。削除します'), err),
+    (close) => {
+      const go2 = h('button', { class: 'btn danger', disabled: true, onclick: async () => {
+        go2.disabled = true;
+        try { await run(); close(); } catch (ex) { err.textContent = ex.message; go2.disabled = false; }
+      } }, '削除する');
+      chk.addEventListener('change', () => { go2.disabled = !chk.checked; });
+      return [h('button', { class: 'btn secondary', onclick: close }, 'やめる'), go2];
+    });
   }
 
   // はい／いいえ の確認（ブラウザの確認ダイアログは使わない）
@@ -161,11 +487,14 @@
   async function route() {
     clearTimers();
     document.querySelectorAll('.overlay').forEach((o) => o.remove());
+    dropUrls();
     if (!S.token) return renderLogin();
     if (!S.user) {
-      try { S.user = (await api('GET', '/api/me')).user; } catch { return; }
+      try { const me = await api('GET', '/api/me'); S.user = me.user; S.pushKey = me.push_key || null; useUserSize(S.user); } catch { return; }
     }
+    if (!P.synced && !S.user.must_change_pw) { P.synced = true; syncPush(); }
     if (S.user.must_change_pw) return renderPassword(true);
+    checkUnread();
     const parts = (curHash() || '#/').slice(2).split('/');
     const [a, b, c] = parts;
     if (a === 'room' && b) return renderChat(Number(b));
@@ -191,7 +520,7 @@
         btn.disabled = true; err.textContent = '';
         try {
           const r = await api('POST', '/api/login', { login_id: normId(idIn.value), password: pwIn.value });
-          S.token = r.token; S.user = r.user; S.lastActive = Date.now();
+          S.token = r.token; S.user = r.user; S.lastActive = Date.now(); useUserSize(r.user);
           safeSet(sessionStorage, 'token', r.token);
           go('#/');
         } catch (ex) { err.textContent = ex.message; btn.disabled = false; pwIn.value = ''; pwIn.focus(); }
@@ -203,22 +532,14 @@
       err, btn,
     );
     mount(h('div', { class: 'login-top' }, sizeButton(true)), h('main', { class: 'login' },
-      h('div', { class: 'logo' }, 'ケアつなぎ'),
+      h('div', { class: 'logo' }, 'ケアブル'),
       h('p', { class: 'tagline' }, 'ケアマネジャーと事業所をつなぐ連絡帳'),
-      API === 'demo' ? h('div', { class: 'demo-note' }, h('b', null, 'デモサイトです（見本データ）'), h('br'),
-        h('span', { class: 'hint' }, 'ボタンを押すと、その立場でログインできます。入力した内容は保存されず、読み込み直すと元に戻ります。'),
-        h('p', { class: 'demo-head' }, 'ケアマネジャー（4人）'),
-        h('div', { class: 'demo-logins' },
-          [['cm-demo', '山田 花子', '利用者60名'], ['cm2-demo', '大野 美香', '利用者8名'], ['cm3-demo', '渡部 健太', '利用者9名'], ['cm4-demo', '森 由紀子', '利用者7名']]
-            .map(([id, label, sub]) => h('button', { type: 'button', class: 'btn', onclick: () => window.demoLogin && window.demoLogin(id) }, label, h('small', null, sub)))),
-        h('p', { class: 'demo-head' }, 'サービス事業所（6か所）'),
-        h('div', { class: 'demo-logins one' },
-          [['office-demo', 'ひまわり訪問介護', 'ケアマネ3人と共有'], ['day-demo', 'さくらデイサービス', 'つながる依頼が1件'], ['nurse-demo', 'みどり訪問看護', 'ケアマネ3人と共有'],
-            ['short-demo', 'ショートステイ松風', 'つながる依頼が1件'], ['yougu-demo', 'あおば福祉用具', 'つながる依頼が1件'], ['yakkyoku-demo', 'たんぽぽ薬局', 'ケアマネ3人と共有']]
-            .map(([id, label, sub]) => h('button', { type: 'button', class: 'btn secondary', onclick: () => window.demoLogin && window.demoLogin(id) }, label, h('small', null, sub)))),
-        h('span', { class: 'hint' }, '事業所は、1つのIDで複数のケアマネジャーとつながれます。パスワード（共通）：Demo-pass-123')) : null,
+      API === 'demo' ? h('div', { class: 'demo-note' }, h('b', null, 'デモモードで動いています'), h('br'),
+        'ケアマネ：cm-demo / cm2-demo　事業所：office-demo / nurse-demo / day-demo', h('br'), 'パスワード（共通）：Demo-pass-123', h('br'),
+        h('span', { class: 'hint' }, '見本データです。再読み込みすると元に戻ります。')) : null,
       form,
-      h('div', { class: 'secure-note' }, '🔒 安心してお使いいただくために',
+      isApp() ? null : h('p', { class: 'installrow' }, h('button', { type: 'button', class: 'btn secondary block', onclick: installApp }, '📲 ホーム画面に追加（アプリにする）')),
+      h('div', { class: 'secure-note' }, '🔒 安心してお使いいただけます',
         h('ul', null,
           h('li', null, '通信と保存データはすべて暗号化しています'),
           h('li', null, '5回続けて間違えると15分間ロックされます'),
@@ -236,6 +557,7 @@
     const tok = h('input', { type: 'password', id: 'setup-token', autocomplete: 'off' });
     const name = h('input', { type: 'text', id: 'setup-name', maxlength: '50' });
     const lid = h('input', { type: 'text', id: 'setup-id', autocapitalize: 'off', spellcheck: 'false', maxlength: '64' });
+    const prefSel = h('select', { id: 'setup-pref' }, h('option', { value: '' }, '（都道府県をえらぶ）'), PREFS.map((x) => h('option', { value: x }, x)));
     const pw = h('input', { type: 'password', id: 'setup-pw', autocomplete: 'new-password' });
     const pw2 = h('input', { type: 'password', id: 'setup-pw2', autocomplete: 'new-password' });
     const btn = h('button', { class: 'btn block', type: 'submit' }, '登録する');
@@ -246,16 +568,18 @@
         e.preventDefault(); err.textContent = '';
         lid.value = normId(lid.value);
         if (!/^[A-Za-z0-9._-]{4,64}$/.test(lid.value)) { err.textContent = 'ログインIDは、半角の英字・数字で4文字以上にしてください（例：1234）'; return; }
+        if (!prefSel.value) { err.textContent = '都道府県をえらんでください'; prefSel.focus(); return; }
         if (pw.value.length < 10) { err.textContent = `パスワードは10文字以上にしてください（いま ${pw.value.length}文字です）`; return; }
         if (pw.value !== pw2.value) { err.textContent = 'パスワードが一致しません'; return; }
         btn.disabled = true;
         try {
-          await api('POST', '/api/setup', { setup_token: tok.value, name: name.value, login_id: normId(lid.value), password: pw.value });
+          await api('POST', '/api/setup', { setup_token: tok.value, name: name.value, login_id: normId(lid.value), password: pw.value, pref: prefSel.value });
           renderLogin('登録しました。いま決めたログインIDとパスワードでログインしてください');
         } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
       } },
         h('label', { class: 'field' }, 'セットアップキー', tok),
         h('label', { class: 'field' }, '氏名', name),
+        h('label', { class: 'field' }, '基本の都道府県', h('span', { class: 'hint' }, '（事業所をさがすときに、最初からこの県がえらばれます。あとで変更できます）'), prefSel),
         h('label', { class: 'field' }, 'ログインID', h('span', { class: 'hint' }, '（半角の英字・数字で4文字以上。数字だけでも大丈夫です。例：1234）'), lid),
         h('label', { class: 'field' }, 'パスワード', h('span', { class: 'hint' }, '（10文字以上・英字と数字など2種類以上）'), pw),
         h('label', { class: 'field' }, 'パスワード（確認）', pw2),
@@ -266,14 +590,17 @@
 
   // 右上の「文字」ボタン：押すたびに 大 ⇔ 通常 が切り替わる
   function sizeButton(light) {
-    const label = () => (document.documentElement.dataset.size === 'normal' ? '通常' : '大');
-    const cur = h('span', { class: 'cur' }, label());
-    const btn = h('button', { type: 'button', class: 'sizebtn' + (light ? ' light' : ''), 'aria-label': `文字の大きさ（いまは${label()}。押すと切り替わります）` },
+    const cur = h('span', { class: 'cur' }, sizeLabel());
+    const btn = h('button', { type: 'button', class: 'sizebtn' + (light ? ' light' : ''), 'aria-label': `文字の大きさ（いまは${sizeLabel()}。押すと切り替わります）` },
       h('span', { class: 'aa', 'aria-hidden': 'true' }, 'あ'), '文字', cur);
     btn.addEventListener('click', () => {
-      applySize(document.documentElement.dataset.size === 'normal' ? 'large' : 'normal');
-      document.querySelectorAll('.sizebtn .cur').forEach((x) => { x.textContent = label(); });
-      document.querySelectorAll('.sizebtn').forEach((x) => { x.setAttribute('aria-label', `文字の大きさ（いまは${label()}。押すと切り替わります）`); });
+      const i = SIZES.findIndex(([k]) => k === document.documentElement.dataset.size);
+      const next = SIZES[(i + 1) % SIZES.length][0];
+      applySize(next);
+      if (S.token && S.user) {
+        S.user.font_size = next;
+        api('POST', '/api/me/prefs', { font_size: next }).catch(() => { /* 保存できなくても表示は変える */ });
+      }
     });
     return h('div', { class: 'sizewrap' }, btn);
   }
@@ -311,7 +638,10 @@
     cur.focus();
   }
 
+  // 自分でログアウトしたら、このパソコンへの通知も止める（共用のパソコンで、次の人に届かないように）
+  // ※ 30分操作がなくて自動でログアウトしたときは止めない（席を外していても、新しい連絡に気づけるように）
   async function doLogout() {
+    await pushOff();
     try { await api('POST', '/api/logout'); } catch { /* 無視 */ }
     logoutLocal('ログアウトしました');
   }
@@ -342,7 +672,7 @@
   async function renderHome(tab, officeId) {
     const isCm = S.user.role === 'cm';
     if (!S.svc) S.svc = 'all';
-    const title = isCm ? 'ケアつなぎ' : (S.user.office ? S.user.office.name : 'ケアつなぎ');
+    const title = isCm ? 'ケアブル' : (S.user.office ? S.user.office.name : 'ケアブル');
     const listBox = h('div', null, h('p', { class: 'empty loading' }, '読み込み中…'));
     const tabs = isCm ? h('nav', { class: 'tabs', role: 'tablist' },
       h('button', { role: 'tab', 'aria-selected': String(tab === 'clients'), onclick: () => go('#/') }, '👤 利用者ごと'),
@@ -360,7 +690,7 @@
       fill(notice, `🔔 ケアマネジャーから「つながる依頼」が ${S.user.pending || 0}件 届いています`, h('span', { class: 'go' }, '確認する ›'));
     }
     drawNotice();
-    mount(topbar(title, { sub: `${S.user.name} さん`, right: menuButton(), dog: true }), tabs, notice, isCm && !officeId ? chipBox : cmBox, searchBox, h('main', null, listBox));
+    mount(topbar(title, { sub: `${S.user.name} さん`, right: menuButton(), dog: true }), tabs, notice, notifyInvite(), isCm && !officeId ? chipBox : cmBox, searchBox, h('main', null, listBox));
     if (!isCm && S.cmFilter == null) S.cmFilter = 'all';
     let cms = [];
     function drawCms() {
@@ -440,34 +770,40 @@
       ]));
     }
 
-    const load = async () => {
+    const load = async (passive) => {
       try {
-        if (isCm) {
+        // 合図を受けての取り直しでは、変わりやすい「一覧」だけを取る（事業所の一覧などは取り直さない）
+        if (isCm && !(passive && offices.length)) {
           offices = (await api('GET', '/api/offices')).offices;
           if (!officeId) drawChips();
         }
         if (tab === 'offices') { drawOffices(); return; }
         const sel = isCm && !officeId ? svcTypes() : null;
         const q = officeId ? `?office_id=${officeId}` : (sel && sel.length === 1 ? `?service_type=${encodeURIComponent(sel[0])}` : '');
-        const got = await api('GET', '/api/rooms' + q);
+        const got = await api('GET', '/api/rooms' + q, null, { passive });
         rooms = got.rooms;
         if (!isCm) {
           cms = got.cms || []; drawCms();
-          try { S.user = (await api('GET', '/api/me')).user; drawNotice(); } catch { /* そのまま */ }
+          if (!passive) { try { S.user = (await api('GET', '/api/me')).user; drawNotice(); } catch { /* そのまま */ } }
         }
         // 大分類（居宅・入所）で絞るときは、画面側でまとめて絞り込む
         if (sel && sel.length > 1) rooms = rooms.filter((r) => r.offices.some((o) => sel.includes(o.service_type)));
         drawRooms();
-      } catch (ex) { fill(listBox, h('p', { class: 'empty error' }, ex.message)); }
+      } catch (ex) { if (!passive) fill(listBox, h('p', { class: 'empty error' }, ex.message)); }
     };
     await load();
-    every(30000, load);
+    watch(60000, load);
+    S.refresh = load;
   }
 
 
   // ---------- 添付ファイル ----------
   const MAX_FILE = 5 * 1024 * 1024;
   const blobCache = new Map();
+  // 写真・PDFを表示するための一時的なアドレス。画面を切り替えたとき・ログアウトしたときに必ず破棄する
+  const liveUrls = new Set();
+  function objUrl(blob) { const u = URL.createObjectURL(blob); liveUrls.add(u); return u; }
+  function dropUrls() { liveUrls.forEach((u) => URL.revokeObjectURL(u)); liveUrls.clear(); }
   async function apiRaw(method, path, { body, headers } = {}) {
     let res;
     try {
@@ -529,10 +865,10 @@
       const blob = await fileBlob(f);
       const kind = fileKind(f);
       if (kind === 'image') {
-        const url = URL.createObjectURL(blob);
+        const url = objUrl(blob);
         viewer(f.name, h('img', { src: url, alt: f.name, class: 'viewer-img' }));
       } else if (kind === 'pdf') {
-        const url = URL.createObjectURL(blob);
+        const url = objUrl(blob);
         viewer(f.name, h('iframe', { src: url, title: f.name, class: 'viewer-pdf' }),
           h('a', { class: 'btn secondary', href: url, target: '_blank', rel: 'noopener' }, '別の画面で開く'));
       } else {
@@ -551,7 +887,7 @@
       const img = h('img', { alt: f.name, class: 'thumb' });
       img.addEventListener('load', () => { const sc = img.closest('.chat-scroll'); if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < img.height + 200) sc.scrollTop = sc.scrollHeight; });
       const btn = h('button', { type: 'button', class: 'filethumb', 'aria-label': `写真「${f.name}」を大きく見る`, onclick: () => openFile(f) }, img, h('span', { class: 'loading' }, '写真を読み込み中…'));
-      fileBlob(f).then((b) => { img.src = URL.createObjectURL(b); btn.querySelector('.loading')?.remove(); })
+      fileBlob(f).then((b) => { img.src = objUrl(b); btn.querySelector('.loading')?.remove(); })
         .catch(() => { btn.querySelector('.loading').textContent = '写真を表示できませんでした'; });
       return btn;
     }
@@ -588,7 +924,7 @@
       const caption = h('textarea', { rows: '2', maxlength: '500', placeholder: 'ひとこと（なくても送れます）', id: 'upload-caption' });
       const err = h('p', { class: 'error' });
       const preview = pf.kind === 'image'
-        ? h('img', { src: URL.createObjectURL(pf.blob), alt: '', class: 'upload-preview' })
+        ? h('img', { src: objUrl(pf.blob), alt: '', class: 'upload-preview' })
         : h('div', { class: 'filecard static' }, h('span', { class: 'ficon ' + pf.kind }, pf.kind === 'pdf' ? 'PDF' : 'CSV'),
           h('span', { class: 'fmain' }, h('span', { class: 'fname' }, pf.name), h('span', { class: 'fmeta' }, fmtSize(pf.blob.size))));
       dialog('このファイルを送りますか？', h('div', null, preview,
@@ -622,6 +958,7 @@
 
     let lastId = 0, lastDay = '', roomName = '';
     const mineReadEls = new Map();
+    const shown = new Set(); // 表示済みのメッセージ（同じものを2回出さない）
 
     try {
       const { rooms } = await api('GET', '/api/rooms');
@@ -637,6 +974,8 @@
     function addMessages(list) {
       const nearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
       for (const m of list) {
+        if (shown.has(m.id)) continue;
+        shown.add(m.id);
         const day = fmtDay(m.created_at);
         if (day !== lastDay) { scroll.append(h('div', { class: 'daysep' }, h('span', null, day))); lastDay = day; }
         const readEl = m.mine ? h('div', null, m.read_count ? `既読 ${m.read_count}` : '') : null;
@@ -658,21 +997,29 @@
       }
     }
 
+    // 新しいメッセージの取り込みは、同時に1つだけ行う（重なると同じ吹き出しが2つ出るため）
+    let pulling = null, sending = false;
+    async function pull(passive) {
+      while (pulling) { try { await pulling; } catch { /* 次へ */ } }
+      pulling = (async () => {
+        const more = await api('GET', `/api/rooms/${clientId}/messages?after=${lastId}`, null, { passive });
+        if (more.messages.length) { scroll.querySelector('.empty')?.remove(); addMessages(more.messages); checkUnread(true); }
+        applyReads(more.reads);
+      })();
+      try { await pulling; } finally { pulling = null; }
+    }
+
     try {
       const { messages, can_post } = await api('GET', `/api/rooms/${clientId}/messages`);
       if (!messages.length) scroll.append(h('p', { class: 'empty' }, `${roomName} 様についての連絡はまだありません。`));
       addMessages(messages);
       scroll.scrollTop = scroll.scrollHeight;
+      checkUnread(true); // いま開いて読んだ分を、タブの数から引く
       if (can_post) {
         const ta = h('textarea', { rows: '1', 'aria-label': 'メッセージを入力', placeholder: 'メッセージを入力', maxlength: '4000' });
         const send = h('button', { class: 'btn', type: 'submit' }, '送信');
         const fileIn = h('input', { type: 'file', accept: 'image/*,application/pdf,.pdf,text/csv,.csv', hidden: true, id: 'file-input' });
-        const refresh = async () => {
-          const more = await api('GET', `/api/rooms/${clientId}/messages?after=${lastId}`);
-          scroll.querySelector('.empty')?.remove();
-          addMessages(more.messages);
-          applyReads(more.reads);
-        };
+        const refresh = () => pull();
         fileIn.addEventListener('change', () => { const f = fileIn.files[0]; fileIn.value = ''; if (f) confirmUpload(clientId, f, () => refresh().catch(() => {})); });
         const attach = h('button', { type: 'button', class: 'attachbtn', 'aria-label': '写真・PDF・CSVを送る', onclick: () => fileIn.click() }, '📎');
         ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; });
@@ -680,18 +1027,25 @@
           class: 'composer',
           onsubmit: async (e) => {
             e.preventDefault();
+            if (sending) return; // 送信中はもう一度押しても送らない
             const text = ta.value.trim();
             if (!text) return;
-            send.disabled = true;
+            sending = true; send.disabled = true; send.textContent = '送信中…';
+            // 押した瞬間に入力欄を空にして、「送信中」の吹き出しをすぐ出す
+            ta.value = ''; ta.style.height = 'auto';
+            scroll.querySelector('.empty')?.remove();
+            const temp = h('div', { class: 'msg mine sending' }, h('div', { class: 'row' }, h('div', { class: 'bubble' }, h('div', { class: 'btext' }, text)), h('div', { class: 'time' }, '送信中…')));
+            scroll.append(temp); scroll.scrollTop = scroll.scrollHeight;
             try {
               await api('POST', `/api/rooms/${clientId}/messages`, { body: text });
-              ta.value = ''; ta.style.height = 'auto';
-              const more = await api('GET', `/api/rooms/${clientId}/messages?after=${lastId}`);
-              scroll.querySelector('.empty')?.remove();
-              addMessages(more.messages);
-              applyReads(more.reads);
-            } catch (ex) { toast(ex.message, true); }
-            send.disabled = false; ta.focus();
+              temp.remove();
+              await pull();
+            } catch (ex) {
+              temp.remove();
+              if (!ta.value) ta.value = text; // 送れなかったときは文字を戻す
+              toast(ex.message, true);
+            }
+            sending = false; send.disabled = false; send.textContent = '送信'; ta.focus();
           },
         }, fileIn, attach, ta, send));
       } else {
@@ -699,13 +1053,11 @@
       }
     } catch (ex) { scroll.replaceChildren(h('p', { class: 'empty error' }, ex.message)); return; }
 
-    every(5000, async () => {
-      try {
-        const { messages, reads } = await api('GET', `/api/rooms/${clientId}/messages?after=${lastId}`);
-        if (messages.length) { scroll.querySelector('.empty')?.remove(); addMessages(messages); }
-        applyReads(reads);
-      } catch { /* 次回再試行 */ }
-    });
+    // 相手の書き込みは、サーバーからの合図で取り込む。合図を受け取れない端末だけ、画面を見ているあいだ20秒ごとに確認する
+    // 画面が裏にあるときは取り込まない（見ていないのに「既読」にならないように）。戻ってきた瞬間に取り込む
+    const quietPull = async () => { if (sending || pulling || document.hidden) return; try { await pull(true); } catch { /* 次回再試行 */ } };
+    watch(20000, quietPull);
+    S.refresh = quietPull;
   }
   addEventListener('hashchange', () => { app.style.height = ''; });
 
@@ -727,14 +1079,42 @@
         isCm ? h('ul', { class: 'menu' },
           h('li', null, h('button', { onclick: () => go('#/manage/clients') }, '👤 利用者の管理')),
           h('li', null, h('button', { onclick: () => go('#/manage/offices') }, '🏢 事業所の管理')),
-          h('li', null, h('button', { onclick: () => go('#/manage/accounts') }, '🔑 サービス事業所アカウントの管理'))) : null,
+          h('li', null, h('button', { onclick: () => go('#/manage/accounts') }, '🔑 サービス事業所アカウントの管理')),
+          h('li', null, h('button', { onclick: editPref }, '📍 基本の都道府県',
+            h('span', { class: 'hint' }, S.user.pref ? `いまは「${S.user.pref}」です。押すと変更できます` : 'まだ決まっていません。押すと登録できます')))) : null,
         h('details', { class: 'menufold' },
           h('summary', null, '安全のための設定・記録'),
           h('ul', { class: 'menu' },
           h('li', null, h('button', { onclick: () => go('#/password') }, '🔒 パスワード変更')),
           isCm ? h('li', null, h('button', { onclick: () => go('#/manage/audit') }, '📋 操作の記録（監査ログ）', h('span', { class: 'hint' }, 'だれが・いつ見たかを確認できます'))) : null)),
+        h('ul', { class: 'menu' },
+          h('li', null, h('button', { onclick: toggleNotify }, '🔔 新しい連絡のお知らせ（このパソコン）',
+            h('span', { class: 'tag ' + (P.on ? 'ok' : '') }, P.on ? 'オン' : 'オフ'),
+            h('span', { class: 'hint' }, notifyHint())))),
+        isApp() ? null : h('ul', { class: 'menu' },
+          h('li', null, h('button', { onclick: installApp }, '📲 ホーム画面に追加（アプリにする）',
+            h('span', { class: 'hint' }, 'アイコンを押すだけで、すぐ開けるようになります')))),
         h('ul', { class: 'menu last' },
           h('li', null, h('button', { onclick: doLogout }, '🚪 ログアウト')))));
+  }
+
+  // 基本の都道府県（事業所をさがすときに、最初からえらばれる県）
+  function editPref() {
+    const sel = h('select', null, h('option', { value: '' }, '（都道府県をえらぶ）'), PREFS.map((x) => h('option', { value: x, selected: S.user.pref === x }, x)));
+    const err = h('p', { class: 'error' });
+    dialog('基本の都道府県', h('div', null,
+      h('p', { class: 'hint' }, '事業所を追加するときに、最初からこの県の名簿が出ます。となりの県の事業所も、追加の画面で県を切り替えればさがせます。'),
+      h('label', { class: 'field' }, '都道府県', sel), err),
+    (close) => [
+      h('button', { class: 'btn secondary', onclick: close }, 'やめる'),
+      h('button', { class: 'btn', onclick: async () => {
+        if (!sel.value) { err.textContent = '都道府県をえらんでください'; return; }
+        try {
+          await api('POST', '/api/me/prefs', { pref: sel.value });
+          S.user.pref = sel.value; close(); toast('保存しました'); route();
+        } catch (ex) { err.textContent = ex.message; }
+      } }, '保存'),
+    ]);
   }
 
   // ---------- つながっているケアマネジャー（事業所のみ） ----------
@@ -787,7 +1167,7 @@
 
   // ---------- 事業所の名簿（厚生労働省の公開データ）を取り込む ----------
   // CSV の1行を項目に分ける（"..." で囲まれた項目の中のカンマ・改行にも対応）
-  function parseCsv(text, onRow) {
+  function parseCsvRows(text, onRow) {
     let row = [], cell = '', inQ = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
@@ -818,7 +1198,7 @@
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       progress(`${pref}の事業所をえらび出しています${step}…`);
       let col = null; const rows = [];
-      parseCsv(text, (r) => {
+      parseCsvRows(text, (r) => {
         if (!col) {
           const at = (...names) => r.findIndex((x) => names.some((n) => x.trim().startsWith(n)));
           col = { pref: at('都道府県名'), city: at('市区町村名'), name: at('事業所名'), addr: at('住所'), bld: at('方書'), tel: at('電話番号'), no: at('事業所番号') };
@@ -844,7 +1224,7 @@
       const canPost = h('input', { type: 'checkbox', checked: o?.can_post });
       const err = h('p', { class: 'error' });
       // 新しく追加するときだけ：県 → 市区町村 → 名簿からえらぶ
-      const pref = h('select', null, h('option', { value: '' }, '（都道府県をえらぶ）'), PREFS.map((x) => h('option', { value: x, selected: safeGet(localStorage, 'pref') === x }, x)));
+      const pref = h('select', null, h('option', { value: '' }, '（都道府県をえらぶ）'), PREFS.map((x) => h('option', { value: x, selected: (S.user.pref || safeGet(localStorage, 'pref')) === x }, x)));
       const city = h('select', { disabled: true }, h('option', { value: '' }, '（市区町村をえらぶ）'));
       const kw = h('input', { type: 'search', placeholder: '🔍 事業所名でさがす', 'aria-label': '事業所名でさがす' });
       const pickBox = h('div', { class: 'pickbox' });
@@ -876,7 +1256,11 @@
         const my = ++seq;
         city.disabled = true; fill(city, h('option', { value: '' }, '（市区町村をえらぶ）'));
         if (!pref.value) return note('都道府県をえらぶと、その地域の事業所が一覧で出ます。');
-        safeSet(localStorage, 'pref', pref.value);
+        // 基本の都道府県がまだ決まっていない人は、最初にえらんだ県をそのまま登録する（次からどの端末でもこの県が出る）
+        if (!S.user.pref) {
+          S.user.pref = pref.value; safeSet(localStorage, 'pref', pref.value);
+          api('POST', '/api/me/prefs', { pref: pref.value }).then(() => toast(`基本の都道府県を「${pref.value}」にしました`)).catch(() => { /* 保存できなくても、この画面では使える */ });
+        }
         if (NO_DIRECTORY.includes(svc.value)) return note('この種別は公開されている名簿がありません。下の「事業所名」に直接入力してください。');
         note('確認しています…');
         try {
@@ -919,7 +1303,7 @@
         !o && S.clientDraft ? h('p', { class: 'testnote' }, '保存すると、利用者の入力画面に戻ります。入力した内容はそのまま残っています。') : null,
         h('label', { class: 'field' }, 'サービス種別', svc),
         o ? null : h('fieldset', { class: 'card picker' }, h('legend', null, '一覧からえらぶ'),
-          h('label', { class: 'field' }, '都道府県', pref),
+          h('label', { class: 'field' }, '都道府県', h('span', { class: 'hint' }, '（となりの県の事業所をさがすときは、ここで切り替えられます）'), pref),
           h('label', { class: 'field' }, '市区町村', city),
           kw, pickBox),
         h('label', { class: 'field' }, '事業所名', o ? null : h('span', { class: 'hint' }, '（一覧にない新しい事業所は、ここに直接入力できます）'), name),
@@ -958,7 +1342,7 @@
           h('button', {
             class: 'btn ' + (o.active ? 'danger' : 'secondary'),
             onclick: async () => {
-              const msg = o.active ? `「${o.name}」の共有を停止します。所属アカウントもログインできなくなります。よろしいですか？` : `「${o.name}」を再開しますか？（アカウントは個別に有効化してください）`;
+              const msg = o.active ? `「${o.name}」との共有を停止します。この事業所のアカウントから、あなたの利用者が見えなくなります。よろしいですか？` : `「${o.name}」との共有を再開しますか？`;
               dialog('確認', h('p', null, msg), (close) => [
                 h('button', { class: 'btn secondary', onclick: close }, 'やめる'),
                 h('button', { class: 'btn' + (o.active ? ' danger' : ''), onclick: async () => {
@@ -966,6 +1350,10 @@
                 } }, o.active ? '停止する' : '再開する')]);
             },
           }, o.active ? '共有を停止' : '再開'),
+          h('button', { class: 'btn danger outline', onclick: () => confirmDelete(
+            `「${o.name}」を削除します。`,
+            ['この事業所は、利用者の共有先から外れます。', 'この事業所につないだアカウントからは、あなたの利用者が見えなくなります。', 'これまでのやり取りは残ります。', '削除は元に戻せません。しばらく使わないだけなら「共有を停止」をおすすめします。'],
+            async () => { await api('POST', `/api/offices/${o.id}/delete`); toast('削除しました'); reload(); }) }, '削除'),
         ))) : h('p', { class: 'empty' }, '事業所はまだありません'),
     );
   }
@@ -1022,15 +1410,20 @@
           h('button', { class: 'btn secondary', onclick: () => openForm(c) }, '編集'),
           h('button', { class: 'btn secondary', onclick: async () => {
             try { await api('PATCH', '/api/clients/' + c.id, { archived: !c.archived }); reload(); } catch (ex) { toast(ex.message, true); }
-          } }, c.archived ? '支援を再開' : '支援終了（非表示）')),
+          } }, c.archived ? '支援を再開' : '支援終了（非表示）'),
+          h('button', { class: 'btn danger outline', onclick: () => confirmDelete(
+            `「${c.name} 様」を削除します。`,
+            ['この方とのやり取り・写真・PDF などが、すべて消えます。', '削除は元に戻せません。記録を残したいときは「支援終了（非表示）」を使ってください。'],
+            async () => { await api('POST', `/api/clients/${c.id}/delete`); toast('削除しました'); reload(); }) }, '削除')),
       )) : h('p', { class: 'empty' }, '利用者はまだいません'),
     );
   }
 
   function genPassword() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-    const r = crypto.getRandomValues(new Uint32Array(12));
-    return Array.from(r, (x) => chars[x % chars.length]).join('') + '-' + (r[0] % 90 + 10);
+    // かたよりが出ない範囲の乱数だけを使う
+    const pick = (n) => { const b = new Uint32Array(1); let x; do { crypto.getRandomValues(b); x = b[0]; } while (x >= Math.floor(0x100000000 / n) * n); return x % n; };
+    return Array.from({ length: 12 }, () => chars[pick(chars.length)]).join('') + '-' + (pick(90) + 10);
   }
   function showPassword(loginId, pw) {
     dialog('初期パスワード', h('div', null,
@@ -1050,7 +1443,7 @@
       const loginId = h('input', { type: 'text', autocapitalize: 'off', maxlength: '64' });
       const err = h('p', { class: 'error' });
       dialog('新しいIDを発行', h('div', null,
-        h('p', { class: 'hint' }, 'まだケアつなぎのIDを持っていない事業所に、IDを発行します。'),
+        h('p', { class: 'hint' }, 'まだケアブルのIDを持っていない事業所に、IDを発行します。'),
         h('label', { class: 'field' }, '事業所', office),
         h('label', { class: 'field' }, '担当者名', name),
         h('label', { class: 'field' }, 'ログインID', h('span', { class: 'hint' }, '（半角の英字・数字で4文字以上。数字だけでも大丈夫です。例：1234）'), loginId),
@@ -1131,7 +1524,7 @@
     room_view: 'トーク閲覧', message_post: 'メッセージ送信', file_upload: 'ファイル送信', file_view: 'ファイル閲覧',
     office_create: '事業所登録', office_update: '事業所変更', client_create: '利用者登録', client_update: '利用者変更',
     account_create: 'アカウント発行', account_reset_pw: 'パスワード再発行', account_enable: 'アカウント有効化', account_disable: 'アカウント停止',
-    cm_created: 'ケアマネ登録', account_link_request: 'つながる依頼', account_unlink: 'つながりを外す',
+    cm_created: 'ケアマネ登録', client_delete: '利用者を削除', office_delete: '事業所を削除', account_link_request: 'つながる依頼', account_unlink: 'つながりを外す',
     link_accept: '事業所が依頼を承認', link_reject: '事業所が依頼を断る', link_remove: '事業所がつながりを外す',
   };
   async function manageAudit(body) {
@@ -1145,5 +1538,14 @@
     );
   }
 
-  route();
+  // デモの見本データは、デモのときだけ読み込む（本番では読み込まないので、そのぶん速く開く）
+  if (API === 'demo' && typeof window.demoLogin !== 'function') {
+    const me = document.querySelector('script[src*="app.js"]');
+    const v = me ? (me.getAttribute('src').split('?')[1] || '') : '';
+    const sc = document.createElement('script');
+    sc.src = 'demo-api.js' + (v ? '?' + v : '');
+    sc.onload = route;
+    sc.onerror = () => renderLogin('デモの準備ができませんでした。もう一度開いてください');
+    document.head.append(sc);
+  } else route();
 })();

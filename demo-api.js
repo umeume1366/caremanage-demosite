@@ -1,237 +1,289 @@
-// デモモード専用：config.js の API_BASE が 'demo' のときだけ、サーバーの代わりにブラウザ内の見本データで動きます
-// 本番（API_BASE に Cloudflare の URL を設定）では何もしません
+// ケアブル デモ用の見本データ（このフォルダの index.html から読み込みます）
+// ・サーバーにはつながらず、ブラウザの中だけで動きます。再読み込みすると元に戻ります
+// ・ケアマネジャー3人（累計 60名・30名・100名／いま担当している方 40名・30名・45名）
+// ・サービス事業所は、介護保険のサービス種別ごとに1アカウントずつ（25アカウント）。
+//   どの事業所も、1つのIDで3人のケアマネジャーとつながっています（一部は「つながる依頼」の承認待ち）
+// ・登場する方はすべて架空です
 (() => {
   const T = Date.now();
-  const H = 3600e3, D = 24 * H;
-  const db = {
-    users: [
-      { id: 1, role: 'cm', cm_id: 1, office_id: null, login_id: 'cm-demo', name: '山田 花子', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 2, role: 'provider', cm_id: 1, office_id: 1, login_id: 'office-demo', name: '佐藤 健', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 3, role: 'provider', cm_id: 1, office_id: 2, login_id: 'day-demo', name: '高橋 恵', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 4, role: 'provider', cm_id: 1, office_id: 3, login_id: 'nurse-demo', name: '中村 由美', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 5, role: 'provider', cm_id: 1, office_id: 4, login_id: 'aozora-demo', name: '小川 誠', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 6, role: 'provider', cm_id: 1, office_id: 9, login_id: 'reha-demo', name: '野口 直樹', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 7, role: 'provider', cm_id: 1, office_id: 12, login_id: 'short-demo', name: '原田 久美', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 8, role: 'provider', cm_id: 1, office_id: 14, login_id: 'yougu-demo', name: '村上 剛', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 9, role: 'provider', cm_id: 1, office_id: 16, login_id: 'yakkyoku-demo', name: '近藤 彩', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 10, role: 'provider', cm_id: 1, office_id: 19, login_id: 'tokuyou-demo', name: '石井 隆', pw: 'Demo-pass-123', must: false, active: true },
-      // 2人目のケアマネ（同じ事業所IDを共有するしくみの見本）
-      { id: 11, role: 'cm', cm_id: 11, office_id: null, login_id: 'cm2-demo', name: '大野 美香', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 12, role: 'cm', cm_id: 12, office_id: null, login_id: 'cm3-demo', name: '渡部 健太', pw: 'Demo-pass-123', must: false, active: true },
-      { id: 13, role: 'cm', cm_id: 13, office_id: null, login_id: 'cm4-demo', name: '森 由紀子', pw: 'Demo-pass-123', must: false, active: true },
-    ],
-    // いろいろな種類のサービス事業所（居宅サービス・入所サービス）
-    offices: [
-      { id: 1, name: 'ひまわり訪問介護', service_type: '訪問介護', can_post: true, active: true },
-      { id: 2, name: 'さくらデイサービス', service_type: '通所介護', can_post: true, active: true },
-      { id: 3, name: 'みどり訪問看護ステーション', service_type: '訪問看護', can_post: true, active: true },
-      { id: 4, name: 'あおぞらヘルパーステーション', service_type: '訪問介護', can_post: true, active: true },
-      { id: 5, name: 'デイサービスこもれび', service_type: '通所介護', can_post: false, active: true },
-      { id: 6, name: 'けやき訪問看護', service_type: '訪問看護', can_post: false, active: true },
-      { id: 7, name: 'アクア訪問入浴', service_type: '訪問入浴介護', can_post: false, active: true },
-      { id: 8, name: 'もみじ病院 訪問リハビリ', service_type: '訪問リハビリテーション', can_post: false, active: true },
-      { id: 9, name: 'あおばクリニック デイケア', service_type: '通所リハビリテーション', can_post: true, active: true },
-      { id: 10, name: '小さなデイ ほっこり', service_type: '地域密着型通所介護', can_post: false, active: true },
-      { id: 11, name: '認知症デイ やすらぎ', service_type: '認知症対応型通所介護', can_post: false, active: true },
-      { id: 12, name: 'ショートステイ松風', service_type: '短期入所生活介護', can_post: true, active: true },
-      { id: 13, name: '老健つばさ ショートステイ', service_type: '短期入所療養介護', can_post: false, active: true },
-      { id: 14, name: 'あおば福祉用具', service_type: '福祉用具貸与', can_post: true, active: true },
-      { id: 15, name: 'ケアショップ ふくふく', service_type: '特定福祉用具販売', can_post: false, active: true },
-      { id: 16, name: 'たんぽぽ薬局', service_type: '居宅療養管理指導', can_post: true, active: true },
-      { id: 17, name: '小規模多機能 ひだまり', service_type: '小規模多機能型居宅介護', can_post: false, active: true },
-      { id: 18, name: '定期巡回 24ケア', service_type: '定期巡回・随時対応型訪問介護看護', can_post: false, active: true },
-      { id: 19, name: '特別養護老人ホーム 望洋苑', service_type: '介護老人福祉施設（特養）', can_post: true, active: true },
-      { id: 20, name: '介護老人保健施設 つばさ', service_type: '介護老人保健施設（老健）', can_post: false, active: true },
-      { id: 21, name: 'グループホーム 陽だまりの家', service_type: '認知症対応型共同生活介護（グループホーム）', can_post: false, active: true },
-      { id: 22, name: '介護付き有料老人ホーム さくら館', service_type: '特定施設入居者生活介護', can_post: false, active: true },
-      { id: 23, name: '介護医療院 しおさい', service_type: '介護医療院', can_post: false, active: true },
-      { id: 24, name: '住まいの改修 たくみ工務店', service_type: '住宅改修', can_post: false, active: true },
-      // 2人目のケアマネ（大野）が登録している事業所
-      { id: 101, cm_id: 11, name: 'ひまわり訪問介護', service_type: '訪問介護', can_post: true, active: true },
-      { id: 102, cm_id: 11, name: 'さくらデイサービス', service_type: '通所介護', can_post: true, active: true },
-      { id: 103, cm_id: 11, name: 'はなみずき訪問看護', service_type: '訪問看護', can_post: false, active: true },
-      { id: 104, cm_id: 11, name: 'あおば福祉用具', service_type: '福祉用具貸与', can_post: true, active: true },
-      { id: 105, cm_id: 11, name: 'たんぽぽ薬局', service_type: '居宅療養管理指導', can_post: true, active: true },
-      // 3人目のケアマネ（渡部）が登録している事業所
-      { id: 201, cm_id: 12, name: 'ひまわり訪問介護', service_type: '訪問介護', can_post: true, active: true },
-      { id: 202, cm_id: 12, name: 'みどり訪問看護ステーション', service_type: '訪問看護', can_post: true, active: true },
-      { id: 203, cm_id: 12, name: 'ショートステイ松風', service_type: '短期入所生活介護', can_post: true, active: true },
-      { id: 204, cm_id: 12, name: 'たんぽぽ薬局', service_type: '居宅療養管理指導', can_post: true, active: true },
-      { id: 205, cm_id: 12, name: 'デイサービスこもれび', service_type: '通所介護', can_post: false, active: true },
-      // 4人目のケアマネ（森）が登録している事業所
-      { id: 301, cm_id: 13, name: 'さくらデイサービス', service_type: '通所介護', can_post: true, active: true },
-      { id: 302, cm_id: 13, name: 'みどり訪問看護ステーション', service_type: '訪問看護', can_post: true, active: true },
-      { id: 303, cm_id: 13, name: 'あおば福祉用具', service_type: '福祉用具貸与', can_post: true, active: true },
-      { id: 304, cm_id: 13, name: 'ショートステイ松風', service_type: '短期入所生活介護', can_post: true, active: true },
-      { id: 305, cm_id: 13, name: 'あおぞらヘルパーステーション', service_type: '訪問介護', can_post: true, active: true },
-    ],
-    // 事業所アカウントと、ケアマネとのつながり（1つのIDで複数のケアマネとつながれる）
-    links: [],
-    clients: [],
-    messages: [],
-    reads: new Set(),
-    audit: [],
-    seq: 1000,
-  };
-  // ---- 見本の利用者60名（継続45名・終了15名）と連絡を作る（毎回同じ内容になるよう固定の乱数） ----
-  (() => {
-    let seed = 11;
-    const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % n; };
-    const pick = (a) => a[rnd(a.length)];
-    const sei = ['鈴木', '田中', '伊藤', '渡辺', '山本', '中村', '小林', '加藤', '吉田', '山口', '松本', '井上', '木村', '林', '清水', '斎藤', '山崎', '森', '池田', '橋本', '阿部', '石川', '前田', '藤田', '岡田', '後藤', '長谷川', '村田', '遠藤', '青木'];
-    const mei = ['一郎', 'キヨ', '正雄', 'ハル', '茂', 'トメ', '清', 'フミ', '勇', '千代', '博', 'ミツ', '実', 'ヨシ子', '武', '静子', '昭', '和子', '進', '幸子', '弘', 'タケ', '秀夫', '節子', '利夫', '敏子', '三郎', '文子', '義雄', '春江'];
-    const names = [];
-    for (let i = 0; names.length < 60; i++) {
-      const n = `${sei[i % 30]} ${mei[(i * 7 + 3 + Math.floor(i / 30) * 11) % 30]}`;
-      if (!names.includes(n)) names.push(n);
+  const M = 60e3, H = 60 * M, D = 24 * H;
+  const PW = 'Demo-pass-123';
+
+  // 毎回同じ内容になるよう、固定の乱数を使う
+  let seed = 20261113;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % n; };
+  const chance = (p) => rnd(1000) < p * 1000;
+  const pick = (a) => a[rnd(a.length)];
+  const md = (ms) => { const d = new Date(ms); return `${d.getMonth() + 1}月${d.getDate()}日`; };
+  const ymd = (ms) => { const d = new Date(ms); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; };
+
+  // ---- ケアマネジャー3人 ----
+  const CMS = [
+    { id: 1, login_id: 'cm-demo', name: '山田 花子', active: 40, ended: 20 },
+    { id: 2, login_id: 'cm2-demo', name: '大野 美香', active: 30, ended: 0 },
+    { id: 3, login_id: 'cm3-demo', name: '渡部 健太', active: 45, ended: 55 },
+  ];
+
+  // ---- サービス事業所（種別ごとに1アカウント） [種別, 事業所名, 担当者, ログインID, 発行したケアマネ] ----
+  const SVC = [
+    ['訪問介護', 'ひまわり訪問介護', '佐藤 健', 'houmon-demo', 1],
+    ['訪問入浴介護', 'アクア訪問入浴', '岡本 良太', 'nyuyoku-demo', 1],
+    ['訪問看護', 'みどり訪問看護ステーション', '中村 由美', 'nurse-demo', 1],
+    ['訪問リハビリテーション', 'もみじ病院 訪問リハビリ', '野口 直樹', 'houmonreha-demo', 3],
+    ['居宅療養管理指導', 'たんぽぽ薬局', '近藤 彩', 'yakkyoku-demo', 1],
+    ['通所介護', 'さくらデイサービス', '高橋 恵', 'day-demo', 1],
+    ['地域密着型通所介護', '小さなデイ ほっこり', '松田 裕子', 'chiikiday-demo', 3],
+    ['認知症対応型通所介護', '認知症デイ やすらぎ', '内田 浩二', 'ninchiday-demo', 3],
+    ['通所リハビリテーション', 'あおばクリニック デイケア', '安藤 美穂', 'daycare-demo', 1],
+    ['短期入所生活介護', 'ショートステイ松風', '原田 久美', 'short-demo', 1],
+    ['短期入所療養介護', 'みなと病院 短期入所療養', '杉本 誠一', 'shortryoyo-demo', 3],
+    ['小規模多機能型居宅介護', '小規模多機能 ひだまり', '今村 千尋', 'shotaki-demo', 3],
+    ['看護小規模多機能型居宅介護', '看護小規模多機能 えがお', '西川 舞', 'kantaki-demo', 3],
+    ['定期巡回・随時対応型訪問介護看護', '定期巡回 24ケア', '藤井 大輔', 'teiki-demo', 1],
+    ['夜間対応型訪問介護', '夜間訪問 ほしぞら', '久保 拓也', 'yakan-demo', 3],
+    ['福祉用具貸与', 'あおば福祉用具', '村上 剛', 'yougu-demo', 1],
+    ['特定福祉用具販売', 'ケアショップ ふくふく', '小島 早苗', 'hanbai-demo', 2],
+    ['住宅改修', '住まいの改修 たくみ工務店', '大西 勝也', 'kaishu-demo', 2],
+    ['介護老人福祉施設（特養）', '特別養護老人ホーム 望洋苑', '石井 隆', 'tokuyou-demo', 1],
+    ['地域密着型介護老人福祉施設', '地域密着特養 かがやきの郷', '吉川 夏美', 'chiikitoku-demo', 2],
+    ['介護老人保健施設（老健）', '介護老人保健施設 つばさ', '平野 修', 'roken-demo', 3],
+    ['介護医療院', '介護医療院 しおさい', '片山 理恵', 'iryoin-demo', 3],
+    ['特定施設入居者生活介護', '介護付き有料老人ホーム さくら館', '菊地 智子', 'yuryo-demo', 2],
+    ['地域密着型特定施設入居者生活介護', '地域密着型 ケアハウス すずらん', '堀田 光', 'chiikitokutei-demo', 2],
+    ['認知症対応型共同生活介護（グループホーム）', 'グループホーム 陽だまりの家', '桜井 涼子', 'gh-demo', 1],
+  ];
+  const ST = SVC.map((s) => s[0]);
+  const NYUSHO = ST.slice(18); // 入所サービス
+  const si = (type) => ST.indexOf(type);
+
+  const db = { users: [], offices: [], links: [], clients: [], messages: [], reads: new Set(), audit: [], seq: 100000 };
+  for (const c of CMS) db.users.push({ id: c.id, role: 'cm', cm_id: c.id, office_id: null, login_id: c.login_id, name: c.name, pw: PW, must: false, active: true });
+
+  // 事業所は、ケアマネジャーごとに登録する（同じ事業所でも、ケアマネごとに1件）
+  const officeId = (cm, i) => cm * 1000 + i + 1;
+  // 返信を許可していない（閲覧のみ）の組み合わせ
+  const viewOnly = new Set([`1:${si('特定福祉用具販売')}`, `2:${si('住宅改修')}`]);
+  // まだ事業所が承認していない「つながる依頼」
+  const pending = new Set([`2:${si('訪問入浴介護')}`, `2:${si('看護小規模多機能型居宅介護')}`, `3:${si('特定福祉用具販売')}`]);
+  for (const c of CMS) {
+    SVC.forEach(([type, name], i) => db.offices.push({ id: officeId(c.id, i), cm_id: c.id, name, service_type: type, can_post: !viewOnly.has(`${c.id}:${i}`), active: true }));
+  }
+  SVC.forEach(([, , staff, login, home], i) => {
+    const uid = 101 + i;
+    db.users.push({ id: uid, role: 'provider', cm_id: home, office_id: officeId(home, i), login_id: login, name: staff, pw: PW, must: false, active: true, svc: i });
+    for (const c of CMS) {
+      const st = c.id !== home && pending.has(`${c.id}:${i}`) ? 'pending' : 'active';
+      db.links.push({ user_id: uid, cm_id: c.id, office_id: officeId(c.id, i), status: st, active: true, at: T - (c.id === home ? 400 : 120 - i * 2) * D });
     }
-    const home = [1, 4], day = [2, 5], nurse = [3, 6];
-    const live = ['独居', '長女と同居', '夫婦のみ世帯', '長男夫婦と同居', '日中独居', '次女が近所に在住'];
-    const kaigoOf = (i) => ['要支援1', '要支援2', '要介護1', '要介護2', '要介護3', '要介護4', '要介護5'][i];
-    // 継続利用の45名：介護度に合わせて、いろいろな事業所を組み合わせる
-    for (let i = 0; i < 45; i++) {
-      const lv = i < 4 ? 1 : i < 10 ? 2 : i < 20 ? 3 : i < 30 ? 4 : i < 38 ? 5 : 6;
-      const ids = new Set();
+  });
+  const providerOf = (svcIdx) => db.users.find((u) => u.svc === svcIdx);
+
+  // ---- 利用者 ----
+  const SEI = ['鈴木', '田中', '伊藤', '渡辺', '山本', '中村', '小林', '加藤', '吉田', '山口', '松本', '井上', '木村', '林', '清水', '斎藤', '山崎', '森', '池田', '橋本',
+    '阿部', '石川', '前田', '藤田', '岡田', '後藤', '長谷川', '村田', '遠藤', '青木', '坂本', '福田', '太田', '三浦', '藤原', '岡本', '中島', '原', '小野', '竹内',
+    '金子', '和田', '中山', '石田', '上野', '森田', '柴田', '酒井', '工藤', '横山'];
+  const MEI = ['一郎', 'キヨ', '正雄', 'ハル', '茂', 'トメ', '清', 'フミ', '勇', '千代', '博', 'ミツ', '実', 'ヨシ子', '武', '静子', '昭', '和子', '進', '幸子',
+    '弘', 'タケ', '秀夫', '節子', '利夫', '敏子', '三郎', '文子', '義雄', '春江', '貞夫', 'ツル', '健一', '久子', '勝', 'スミ', '輝男', '美代子', '寛', 'ハナ'];
+  const used = new Set();
+  const newName = () => { for (;;) { const n = `${pick(SEI)} ${pick(MEI)}`; if (!used.has(n)) { used.add(n); return n; } } };
+  const KAIGO = ['要支援1', '要支援2', '要介護1', '要介護2', '要介護3', '要介護4', '要介護5'];
+  const LIVE = ['独居', '長女と同居', '夫婦のみ世帯', '長男夫婦と同居', '日中独居', '次女が近所に在住', '息子さんと二人暮らし'];
+  const lvOf = () => { const r = rnd(100); return r < 8 ? 0 : r < 18 ? 1 : r < 40 ? 2 : r < 64 ? 3 : r < 80 ? 4 : r < 92 ? 5 : 6; };
+
+  let cid = 0;
+  for (const cm of CMS) {
+    const mine = [];
+    // いま担当している方
+    for (let k = 0; k < cm.active; k++) {
+      const lv = lvOf();
+      const dem = chance(lv >= 3 ? 0.35 : 0.12);
+      const s = new Set();
       const extra = [];
-      if (i % 15 === 7) {
-        // 小規模多機能を使う方（訪問・通い・泊まりを1か所で）
-        ids.add(17); if (rnd(2)) ids.add(14); if (lv >= 4) ids.add(3);
-      } else if (i % 15 === 11 && lv >= 3) {
-        // 定期巡回を使う方
-        ids.add(18); ids.add(14); if (rnd(2)) ids.add(pick(day));
-      } else {
-        if (lv <= 1 || rnd(10) < 6) ids.add(pick(home));
-        if (rnd(10) < 6) ids.add(pick(day));
-        if (lv >= 3 && rnd(10) < 4) ids.add(pick(nurse));
-        if (lv >= 4 && rnd(10) < 5) ids.add(7);
-        if (rnd(10) < 2) ids.add(8);
-        if (rnd(10) < 2) ids.add(9);
-        if (rnd(10) < 2) ids.add(10);
-        if (i % 9 === 4) { ids.add(11); extra.push('認知症あり'); }
-        if (lv >= 3 && rnd(10) < 3) ids.add(12);
-        if (lv >= 4 && rnd(10) < 2) ids.add(13);
-        if (lv >= 2 && rnd(10) < 5) ids.add(14);
-        if (rnd(10) < 1) ids.add(15);
-        if (lv >= 3 && rnd(10) < 3) ids.add(16);
-        if (i % 13 === 5) { ids.add(24); extra.push('手すり取付を検討中'); }
-        if (lv >= 5 && i % 6 === 0) { ids.add(19); extra.push('特養に入所申込済み'); }
-        if (!ids.size) ids.add(pick(home));
+      if (dem) extra.push('認知症あり');
+      const style = rnd(100);
+      if (lv >= 2 && style < 6) { s.add(si('小規模多機能型居宅介護')); if (chance(0.5)) s.add(si('福祉用具貸与')); }
+      else if (lv >= 3 && style < 10) { s.add(si('看護小規模多機能型居宅介護')); s.add(si('福祉用具貸与')); }
+      else if (lv >= 3 && style < 15) { s.add(si('定期巡回・随時対応型訪問介護看護')); s.add(si('福祉用具貸与')); if (chance(0.5)) s.add(si('通所介護')); }
+      else {
+        if (chance(lv <= 1 ? 0.6 : 0.5)) s.add(si('訪問介護'));
+        if (chance(0.38)) s.add(si('通所介護'));
+        else if (chance(0.18)) s.add(si('地域密着型通所介護'));
+        if (dem && chance(0.4)) s.add(si('認知症対応型通所介護'));
+        if (lv >= 3 && chance(0.4)) s.add(si('訪問看護'));
+        if (lv >= 4 && chance(0.35)) s.add(si('訪問入浴介護'));
+        if (chance(0.12)) s.add(si('訪問リハビリテーション'));
+        if (chance(0.16)) s.add(si('通所リハビリテーション'));
+        if (lv >= 3 && chance(0.28)) s.add(si('居宅療養管理指導'));
+        if (lv >= 3 && chance(0.25)) s.add(si('短期入所生活介護'));
+        if (lv >= 4 && chance(0.12)) s.add(si('短期入所療養介護'));
+        if (lv >= 3 && chance(0.07)) s.add(si('夜間対応型訪問介護'));
+        if (lv >= 2 && chance(0.55)) s.add(si('福祉用具貸与'));
+        if (chance(0.08)) { s.add(si('特定福祉用具販売')); extra.push('入浴用いすを購入予定'); }
+        if (chance(0.07)) { s.add(si('住宅改修')); extra.push('手すり取付を検討中'); }
+        if (!s.size) s.add(si('訪問介護'));
       }
-      db.clients.push({ id: i + 1, name: names[i], note: [kaigoOf(lv), pick(live), ...extra].join('・'), archived: false, office_ids: [...ids].sort((a, b) => a - b) });
+      // 入所の申し込み・検討（いまは在宅）
+      if (lv >= 5 && chance(0.25)) { s.add(si('介護老人福祉施設（特養）')); extra.push('特養に入所申込済み'); }
+      else if (lv >= 5 && chance(0.12)) { s.add(si('地域密着型介護老人福祉施設')); extra.push('地域密着特養に申込済み'); }
+      else if (lv >= 3 && chance(0.08)) { s.add(si('介護老人保健施設（老健）')); extra.push('老健への入所を検討中'); }
+      else if (lv >= 5 && chance(0.06)) { s.add(si('介護医療院')); extra.push('介護医療院を見学予定'); }
+      else if (lv >= 2 && chance(0.06)) { s.add(si('特定施設入居者生活介護')); extra.push('有料老人ホームを見学予定'); }
+      else if (lv >= 2 && chance(0.04)) { s.add(si('地域密着型特定施設入居者生活介護')); extra.push('ケアハウスへの入居を相談中'); }
+      else if (dem && chance(0.3)) { s.add(si('認知症対応型共同生活介護（グループホーム）')); extra.push('グループホームの空き待ち'); }
+      const c = { id: ++cid, cm_id: cm.id, name: newName(), lv, note: [KAIGO[lv], pick(LIVE), ...extra].join('・'), archived: false, svc: s };
+      db.clients.push(c); mine.push(c);
     }
-    // 支援を終了した15名：ご逝去・施設入所・担当変更など
-    const fmt = (ms) => { const d = new Date(ms); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`; };
-    const ended = [
-      ['ご逝去', [1, 3, 14]], ['ご逝去', [3, 6, 7, 14]], ['ご逝去（入院先にて）', [2, 16]], ['ご逝去', [4, 3, 13]], ['ご逝去', [1, 5]], ['ご逝去（ご自宅にて看取り）', [3, 7, 14, 16]],
-      ['特養に入所のため担当終了', [19, 2, 12]], ['老健に入所のため担当終了', [20, 9]], ['グループホームに入居のため担当終了', [21, 11]], ['有料老人ホームに入居のため担当終了', [22, 1]], ['介護医療院に入所のため担当終了', [23, 3, 13]],
-      ['ご家族の転居に伴い、他市の居宅介護支援事業所へ担当変更', [4, 2]], ['ご本人の希望により、他の居宅介護支援事業所へ担当変更', [1, 10]], ['小規模多機能の利用開始に伴い担当変更', [17]], ['要支援に変更となり、地域包括支援センターへ担当変更', [5]],
-    ];
-    ended.forEach(([why, ids], k) => {
-      const at = T - (20 + k * 9 + rnd(6)) * D;
-      db.clients.push({ id: 46 + k, name: names[45 + k], note: `【終了】${fmt(at)} ${why}（${kaigoOf(2 + rnd(5))}）`, archived: true, office_ids: ids });
+    // どの事業所にも、そのケアマネの利用者が2人以上いるようにする
+    ST.forEach((type, i) => {
+      let n = mine.filter((c) => c.svc.has(i)).length;
+      const pool = mine.filter((c) => !c.svc.has(i) && c.lv >= (NYUSHO.includes(type) ? 4 : 2));
+      while (n < 2 && pool.length) {
+        const c = pool.splice(rnd(pool.length), 1)[0];
+        c.svc.add(i); n++;
+        const add = { '介護老人福祉施設（特養）': '特養に入所申込済み', 地域密着型介護老人福祉施設: '地域密着特養に申込済み', '介護老人保健施設（老健）': '老健への入所を検討中', 介護医療院: '介護医療院を見学予定',
+          特定施設入居者生活介護: '有料老人ホームを見学予定', 地域密着型特定施設入居者生活介護: 'ケアハウスへの入居を相談中', '認知症対応型共同生活介護（グループホーム）': 'グループホームの空き待ち',
+          特定福祉用具販売: '入浴用いすを購入予定', 住宅改修: '手すり取付を検討中' }[type];
+        if (add) c.note += '・' + add;
+      }
     });
-
-    const cmMsgs = [
-      '来週のサービス担当者会議は、{d}10時からご自宅で行います。ご出席をお願いします。',
-      '昨日から右ひざの痛みを訴えています。介助の際は様子を見ていただけますか。',
-      '来月からケアプランを変更します。提供票は来週お送りします。',
-      'ご家族から、最近食事量が減っているとの相談がありました。気づいたことがあれば教えてください。',
-      '年末年始のサービス予定を確認させてください。',
-      '主治医から、血圧の薬が変更になったと連絡がありました。ふらつきに注意してください。',
-      '介護認定の更新で、来月に認定調査があります。日程が決まったらお知らせします。',
+    // 支援を終えた方（ご逝去・施設入所・担当変更など）
+    const ENDED = [
+      ['ご逝去', ['訪問看護', '訪問介護', '福祉用具貸与']], ['ご逝去（ご自宅にて看取り）', ['訪問看護', '訪問入浴介護', '福祉用具貸与', '居宅療養管理指導']], ['ご逝去（入院先にて）', ['通所介護', '居宅療養管理指導']],
+      ['特養に入所のため担当終了', ['介護老人福祉施設（特養）', '通所介護', '短期入所生活介護']], ['地域密着特養に入所のため担当終了', ['地域密着型介護老人福祉施設', '短期入所生活介護']],
+      ['老健に入所のため担当終了', ['介護老人保健施設（老健）', '通所リハビリテーション']], ['介護医療院に入所のため担当終了', ['介護医療院', '訪問看護', '短期入所療養介護']],
+      ['有料老人ホームに入居のため担当終了', ['特定施設入居者生活介護', '訪問介護']], ['ケアハウスに入居のため担当終了', ['地域密着型特定施設入居者生活介護', '通所介護']],
+      ['グループホームに入居のため担当終了', ['認知症対応型共同生活介護（グループホーム）', '認知症対応型通所介護']], ['小規模多機能の利用開始に伴い担当変更', ['小規模多機能型居宅介護']],
+      ['看護小規模多機能の利用開始に伴い担当変更', ['看護小規模多機能型居宅介護']], ['ご家族の転居に伴い、他市の居宅介護支援事業所へ担当変更', ['訪問介護', '通所介護']],
+      ['要支援に変更となり、地域包括支援センターへ担当変更', ['通所介護']], ['ご本人の希望により、他の居宅介護支援事業所へ担当変更', ['訪問介護', '福祉用具貸与']],
     ];
-    const reply = {
-      訪問介護: ['本日の訪問時、冷蔵庫に期限切れの食品が多くありました。ご家族への共有をお願いします。', '承知しました。サービス提供責任者が伺います。', '本日は買い物と掃除を実施しました。お変わりありません。'],
-      通所介護: ['本日の入浴は問題なく実施しました。', '昼食は8割ほど召し上がりました。', '承知しました。送迎時間を調整します。'],
-      訪問看護: ['血圧 138/82、体温 36.5℃。むくみは軽度です。', '服薬の飲み忘れが2回ありました。お薬カレンダーの導入を提案します。', '主治医に報告済みです。次回訪問で再確認します。'],
-      通所リハビリテーション: ['歩行訓練は杖で20m可能になりました。', '体力測定の結果をお送りします。前回より改善しています。'],
-      短期入所生活介護: ['ショートステイ中はよく眠れていました。食事も全量召し上がりました。', '次回の利用日を{d}で承りました。'],
-      福祉用具貸与: ['手すりの高さを調整しました。', '車いすの点検を行いました。異常ありません。'],
-      居宅療養管理指導: ['お薬を一包化に変更しました。飲みやすくなったとのことです。', '残薬を確認しました。湿布が多めに余っています。'],
-      '介護老人福祉施設（特養）': ['入所の申し込みを受け付けました。順番が近づいたらご連絡します。', '入所判定会議の結果は来月お知らせします。'],
-    };
-    const accountOf = new Map(db.users.filter((x) => x.office_id).map((x) => [x.office_id, x.id]));
-    let mid = 0;
-    for (const c of db.clients) {
-      if (c.archived || rnd(10) < 2) continue;
-      let t = T - (rnd(20) + 1) * D - rnd(10) * H;
-      const n = 1 + rnd(4);
-      for (let k = 0; k < n; k++) {
-        const oid = c.office_ids[rnd(c.office_ids.length)];
-        const o = db.offices.find((x) => x.id === oid);
-        const author = (k % 2 === 1 || rnd(10) < 3) && o.can_post && accountOf.has(oid) && reply[o.service_type] ? accountOf.get(oid) : 1;
-        const pool = author === 1 ? cmMsgs : reply[o.service_type];
-        const day = new Date(T + 4 * D);
-        db.messages.push({ id: ++mid, client_id: c.id, author_id: author, body: pick(pool).replace('{d}', `${day.getMonth() + 1}月${day.getDate()}日`), at: t });
-        t += (rnd(30) + 1) * H;
-        if (t > T) t = T - rnd(60) * 60e3;
-      }
+    for (let k = 0; k < cm.ended; k++) {
+      const [why, types] = k < ENDED.length ? ENDED[k] : pick(ENDED);
+      const at = T - (14 + Math.floor((k + 1) * (cm.ended > 30 ? 19 : 26)) + rnd(9)) * D;
+      db.clients.push({ id: ++cid, cm_id: cm.id, name: newName(), lv: 3, note: `【終了】${ymd(at)} ${why}（${KAIGO[2 + rnd(5)]}）`, archived: true, svc: new Set(types.map(si)) });
     }
-    db.messages.sort((a, b) => a.at - b.at).forEach((m, i) => { m.id = i + 1; });
-    // 古いメッセージは既読、直近2日分は未読のまま
-    for (const m of db.messages) {
-      if (m.at < T - 2 * D) for (const u of db.users) if (u.id !== m.author_id) db.reads.add(`${u.id}:${m.id}`);
-    }
-  })();
+  }
+  for (const c of db.clients) { c.office_ids = [...c.svc].sort((a, z) => a - z).map((i) => officeId(c.cm_id, i)); }
 
-  // ---- ほかのケアマネ3人（大野・渡部・森）の利用者と、事業所とのつながり ----
-  (() => {
-    for (const o of db.offices) if (o.cm_id == null) o.cm_id = 1;
-    for (const c of db.clients) c.cm_id = 1;
-    for (const x of db.users) if (x.role === 'provider') db.links.push({ user_id: x.id, cm_id: 1, office_id: x.office_id, status: 'active', active: true, at: T - 90 * D });
-    // 事業所アカウント（ID）1つで、複数のケアマネとつながっている。pending は「つながる依頼」が届いていて未承認
-    // 2:ひまわり訪問介護 3:さくらデイ 4:みどり訪問看護 7:ショート松風 8:あおば福祉用具 9:たんぽぽ薬局 5:あおぞらヘルパー
-    const L = [
-      [2, 11, 101, 'active'], [3, 11, 102, 'pending'], [8, 11, 104, 'active'], [9, 11, 105, 'active'],
-      [2, 12, 201, 'active'], [4, 12, 202, 'active'], [7, 12, 203, 'active'], [9, 12, 204, 'active'],
-      [3, 13, 301, 'active'], [4, 13, 302, 'active'], [8, 13, 303, 'pending'], [7, 13, 304, 'pending'], [5, 13, 305, 'active'],
-    ];
-    L.forEach(([user_id, cm_id, office_id, status], i) => db.links.push({ user_id, cm_id, office_id, status, active: true, at: T - (60 - i * 4) * D }));
-    const people = {
-      11: [['前川 ミドリ', '要介護2・独居', [101, 104]], ['小野寺 守', '要介護3・夫婦のみ世帯', [101, 102, 103, 105]], ['菅原 トシ', '要介護1・長女と同居', [102]],
-        ['北村 清一', '要介護4・長男夫婦と同居', [101, 103, 104, 105]], ['今井 フサ', '要支援2・独居', [101]], ['杉山 勝', '要介護2・日中独居', [102, 104]],
-        ['野村 ちよ', '要介護3・次女が近所に在住', [101, 102]], ['宮本 和夫', '要介護1・夫婦のみ世帯', [103, 105]]],
-      12: [['佐野 ツル', '要介護3・独居', [201, 202, 204]], ['川口 正', '要介護2・長女と同居', [205, 201]], ['飯田 ハナ', '要介護4・夫婦のみ世帯', [202, 203, 204]],
-        ['桑原 昭二', '要介護1・日中独居', [201]], ['横山 キミ', '要介護5・長男夫婦と同居', [202, 203]], ['堀 健次', '要介護2・独居', [205, 204]],
-        ['関 タマ', '要介護3・次女が近所に在住', [201, 203]], ['平田 良子', '要支援2・夫婦のみ世帯', [201]], ['市川 寛', '要介護4・独居', [201, 202, 203, 204]]],
-      13: [['大塚 スミ', '要介護2・独居', [301, 303]], ['千葉 忠', '要介護3・長女と同居', [301, 302, 305]], ['上田 ふみ', '要介護1・夫婦のみ世帯', [305]],
-        ['松井 一男', '要介護4・長男夫婦と同居', [302, 303, 304]], ['新井 ヨネ', '要介護2・日中独居', [301, 305]], ['荒木 博之', '要介護3・独居', [302, 304, 305]],
-        ['水野 千鶴', '要支援1・夫婦のみ世帯', [301]]],
-    };
-    const cmLine = ['来月の提供票をお送りします。ご確認ください。', '退院後の初回訪問は明日です。転倒に気をつけてください。', 'ご家族から、夜間の物音が増えたと相談がありました。',
-      '来週のサービス担当者会議は、ご自宅で14時からです。', 'ケアプランを一部変更しました。入浴の回数を週2回にします。'];
-    const officeLine = {
-      訪問介護: ['本日伺いました。室内は杖で歩けています。', '買い物代行の領収書を連絡帳に入れました。', '承知しました。曜日を調整します。'],
-      通所介護: ['本日の入浴は問題なく実施しました。', '昼食は全量召し上がりました。', '送迎時間を10分早めます。'],
-      訪問看護: ['血圧 132/78、体温 36.4℃。お変わりありません。', '褥瘡（床ずれ）は改善傾向です。', '主治医に報告済みです。'],
-      短期入所生活介護: ['ショートステイ中はよく眠れていました。', '次回の利用日を承りました。'],
-      福祉用具貸与: ['手すりの高さを調整しました。', '車いすの点検を行いました。異常ありません。'],
-      居宅療養管理指導: ['お薬を一包化に変更しました。', '残薬を確認しました。湿布が多めに余っています。'],
-    };
-    let seed = 7;
-    const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % n; };
-    let cid = 100;
-    for (const [cm, list] of Object.entries(people)) {
-      for (const [name, note, ids] of list) {
-        const c = { id: ++cid, cm_id: Number(cm), name, note, archived: false, office_ids: ids };
-        db.clients.push(c);
-        let t = T - (rnd(12) + 1) * D - rnd(10) * H;
-        const n = rnd(4);
-        for (let k = 0; k < n; k++) {
-          const oid = ids[rnd(ids.length)];
-          const o = db.offices.find((x) => x.id === oid);
-          const lk = db.links.find((l) => l.cm_id === c.cm_id && l.office_id === oid && l.status === 'active');
-          const byOffice = k % 2 === 1 && lk && o.can_post && officeLine[o.service_type];
-          const pool = byOffice ? officeLine[o.service_type] : cmLine;
-          db.messages.push({ id: 90000 + db.messages.length, client_id: c.id, author_id: byOffice ? lk.user_id : c.cm_id, body: pool[rnd(pool.length)], at: t });
-          t += (rnd(30) + 2) * H; if (t > T) t = T - rnd(90) * 60e3;
-        }
-      }
+  // ---- 連絡のやり取り ----
+  const office = (id) => db.offices.find((o) => o.id === id);
+  const svcOfOffice = (id) => id % 1000 - 1;
+  const linkOf = (cmId, oid) => db.links.find((l) => l.cm_id === cmId && l.office_id === oid && l.status === 'active');
+  // この利用者のトークに書き込める事業所アカウント
+  const postersOf = (c) => c.office_ids.filter((oid) => office(oid).can_post && linkOf(c.cm_id, oid)).map((oid) => ({ oid, user: providerOf(svcOfOffice(oid)) }));
+
+  const CM_SAY = [
+    '来週のサービス担当者会議は、{d}10時からご自宅で行います。ご出席をお願いします。',
+    '昨日から右ひざの痛みを訴えています。介助の際は様子を見ていただけますか。',
+    '来月からケアプランを変更します。提供票は来週お送りします。',
+    'ご家族から、最近食事量が減っているとの相談がありました。気づいたことがあれば教えてください。',
+    '年末年始のサービス予定を確認させてください。休業日があれば教えてください。',
+    '主治医から、血圧の薬が変更になったと連絡がありました。ふらつきに注意してください。',
+    '介護認定の更新で、来月に認定調査があります。日程が決まったらお知らせします。',
+    '長女さんから、夜に何度も電話がかかってくると相談がありました。日中の様子で変わったことはありますか。',
+    '{d}にモニタリングで伺います。最近のご様子を教えてください。',
+    '区分変更の結果が出ました。要介護度が上がりましたので、プランを見直します。',
+  ];
+  const SAY = {
+    訪問介護: ['本日の訪問時、冷蔵庫に期限切れの食品が多くありました。ご家族への共有をお願いします。', '承知しました。サービス提供責任者が伺います。', '本日は買い物と掃除を実施しました。お変わりありません。', '室内は杖で歩けています。玄関の段差だけ見守りが必要です。'],
+    訪問入浴介護: ['本日の入浴は問題なく実施しました。背中に軽い発赤があります。', '入浴前の血圧が高めだったため、本日は清拭に変更しました。', '承知しました。次回から湯温を少し下げます。'],
+    訪問看護: ['血圧 138/82、体温 36.5℃。むくみは軽度です。', '服薬の飲み忘れが2回ありました。お薬カレンダーの導入を提案します。', '主治医に報告済みです。次回訪問で再確認します。', '褥瘡（床ずれ）は改善傾向です。'],
+    訪問リハビリテーション: ['トイレまでの歩行は、見守りで安定してきました。', '自主トレのプリントをお渡ししました。ご家族にも共有ずみです。', '承知しました。階段の練習を追加します。'],
+    居宅療養管理指導: ['お薬を一包化に変更しました。飲みやすくなったとのことです。', '残薬を確認しました。湿布が多めに余っています。', '主治医に処方の見直しを提案しました。結果が出たらお伝えします。'],
+    通所介護: ['本日の入浴は問題なく実施しました。', '昼食は8割ほど召し上がりました。', '承知しました。送迎時間を調整します。', 'レクリエーションでは、歌の時間をとても楽しまれていました。'],
+    地域密着型通所介護: ['本日もお変わりなく過ごされました。', '少人数のため、個別の体操を多めに取り入れています。', '承知しました。利用日を火曜に変更します。'],
+    認知症対応型通所介護: ['本日は落ち着いて過ごされました。午後に一度、帰宅願望がありました。', '承知しました。ご家族への連絡帳にも書いておきます。', '食事の際、箸が進みにくい様子でした。スプーンに変えると召し上がりました。'],
+    通所リハビリテーション: ['歩行訓練は杖で20m可能になりました。', '体力測定の結果をお送りします。前回より改善しています。', '承知しました。リハビリ計画を見直します。'],
+    短期入所生活介護: ['ショートステイ中はよく眠れていました。食事も全量召し上がりました。', '次回の利用日を{d}で承りました。', '空きが出ましたので、{d}からの利用が可能です。'],
+    短期入所療養介護: ['医療的な管理が必要とのことで、看護師が対応します。', '次回の利用日を{d}で承りました。', '退所時に、リハビリの経過をまとめてお渡しします。'],
+    小規模多機能型居宅介護: ['本日は通いのあと、夕方に訪問で服薬確認をしました。', '今週は泊まりを1泊入れています。落ち着いて過ごされました。', '承知しました。訪問の回数を増やします。'],
+    看護小規模多機能型居宅介護: ['看護師が訪問し、点滴を実施しました。経過は良好です。', '本日の泊まりは、夜間2回の体位交換で安眠されていました。', '主治医の指示書を受け取りました。'],
+    '定期巡回・随時対応型訪問介護看護': ['昨夜2時に随時対応のコールがあり、訪問しました。トイレ介助のみで問題ありません。', '定期訪問は1日4回で安定しています。', '承知しました。夜間の巡回を1回追加します。'],
+    夜間対応型訪問介護: ['夜間の巡回で、おむつ交換を実施しました。良眠されています。', '昨夜コールがあり訪問しました。ベッドからずり落ちかけていましたが、けがはありません。'],
+    福祉用具貸与: ['手すりの高さを調整しました。', '車いすの点検を行いました。異常ありません。', '介護ベッドの搬入日を{d}で調整しました。'],
+    特定福祉用具販売: ['入浴用いすのカタログをお送りします。', 'ご注文の品が入荷しました。{d}にお届けします。'],
+    住宅改修: ['手すり取付の見積もりをお送りします。ご確認ください。', '工事は{d}の予定です。理由書の作成をお願いします。', '工事が完了しました。写真を添付して報告書を作成します。'],
+    '介護老人福祉施設（特養）': ['入所の申し込みを受け付けました。順番が近づいたらご連絡します。', '入所判定会議の結果は来月お知らせします。', '来月、空きが出る見込みです。ご家族のご意向を確認いただけますか。'],
+    地域密着型介護老人福祉施設: ['申し込みを受け付けました。現在の待機は5名です。', '見学の日程を{d}で承りました。'],
+    '介護老人保健施設（老健）': ['入所の判定会議で、受け入れ可能となりました。', 'リハビリ目的の入所は、3か月程度を目安にしています。', '退所前のカンファレンスを{d}に行います。'],
+    介護医療院: ['見学のご予約を{d}で承りました。', '医療的な処置が必要な方も受け入れ可能です。主治医の情報提供書をお願いします。'],
+    特定施設入居者生活介護: ['見学のご予約を{d}で承りました。', '体験入居は1週間から可能です。'],
+    地域密着型特定施設入居者生活介護: ['入居のご相談ありがとうございます。空き状況をお知らせします。', '面談の日程を{d}で調整させてください。'],
+    '認知症対応型共同生活介護（グループホーム）': ['現在の空き待ちは3名です。順番が近づいたらご連絡します。', '見学の際の様子から、受け入れは可能と考えています。'],
+  };
+  const fill = (s) => s.replace('{d}', md(T + (3 + rnd(10)) * D));
+  const sayOf = (svcIdx) => fill(pick(SAY[ST[svcIdx]]));
+  const cmSay = () => fill(pick(CM_SAY));
+  const say = (c, author, body, at) => { db.messages.push({ id: ++db.seq, client_id: c.id, author_id: author, body, at: Math.min(at, T - 2 * M) }); };
+
+  // ふだんのやり取り（直近3週間）
+  for (const c of db.clients) {
+    if (c.archived || chance(0.15)) continue;
+    const posters = postersOf(c);
+    let t = T - (rnd(20) + 1) * D - rnd(10) * H;
+    const n = 1 + rnd(5);
+    for (let k = 0; k < n; k++) {
+      const p = posters.length && (k % 2 === 1 || chance(0.35)) ? pick(posters) : null;
+      if (p) say(c, p.user.id, sayOf(svcOfOffice(p.oid)), t); else say(c, c.cm_id, cmSay(), t);
+      t += (rnd(30) + 1) * H;
+      if (t > T) t = T - rnd(90) * M;
     }
-    db.messages.sort((a, z) => a.at - z.at).forEach((m, i) => { m.id = i + 1; });
-    db.reads = new Set();
-    for (const m of db.messages) if (m.at < T - 2 * D) for (const u of db.users) if (u.id !== m.author_id) db.reads.add(`${u.id}:${m.id}`);
-  })();
+  }
+
+  // ---- ていねいに作った見本の会話（一覧の上のほうに出ます） ----
+  const find = (cmId, types, minLv = 2) => db.clients.find((c) => c.cm_id === cmId && !c.archived && !c.used && c.lv >= minLv && types.every((t) => c.svc.has(si(t))))
+    || db.clients.find((c) => c.cm_id === cmId && !c.archived && !c.used && c.lv >= minLv);
+  const ensure = (c, types) => { for (const t of types) { c.svc.add(si(t)); } c.office_ids = [...c.svc].sort((a, z) => a - z).map((i) => officeId(c.cm_id, i)); c.used = true; };
+  const P = (type) => providerOf(si(type)).id;
+  function story(cmId, types, lines, minLv) {
+    const c = find(cmId, types, minLv);
+    if (!c) return null;
+    ensure(c, types);
+    for (const [ago, who, body] of lines) say(c, who === 'cm' ? cmId : P(who), body, T - ago);
+    return c;
+  }
+  const tomorrow = md(T + D);
+  for (const cm of CMS) {
+    // 退院の調整（複数の事業所が同じトークでやり取り）
+    story(cm.id, ['訪問看護', '福祉用具貸与', '訪問介護'], [
+      [27 * H, 'cm', `${tomorrow}の午前に退院が決まりました。退院後は、訪問看護・福祉用具・ヘルパーで支えます。皆さん、よろしくお願いします。`],
+      [26 * H, '福祉用具貸与', `介護ベッドとポータブルトイレは、${tomorrow}の9時に搬入します。`],
+      [25 * H, '訪問看護', '承知しました。退院当日の15時に初回訪問します。主治医の指示書は受け取りずみです。'],
+      [20 * H, '訪問介護', '夕方の訪問を、退院当日から入れられます。17時でいかがでしょうか。'],
+      [19 * H, 'cm', '17時でお願いします。長女さんにも伝えました。'],
+      [95 * M, '訪問看護', '退院時カンファレンスの内容を確認しました。食事はとろみ付きでお願いします。'],
+    ], 4);
+    // デイからの気づき → ケアマネ → 訪問看護
+    story(cm.id, ['通所介護', '訪問看護'], [
+      [2 * D + 3 * H, '通所介護', '本日、送迎の車に乗る際にふらつきがありました。転倒はしていません。'],
+      [2 * D + 2 * H, 'cm', 'ありがとうございます。訪問看護さん、次回の訪問で血圧を気にかけていただけますか。'],
+      [2 * D + 1 * H, '訪問看護', '承知しました。明日伺います。'],
+      [40 * M, '訪問看護', '血圧 102/60 と低めでした。主治医に報告し、降圧薬が1種類減ることになりました。'],
+    ], 3);
+    // ショートステイの空き
+    story(cm.id, ['短期入所生活介護'], [
+      [4 * H, '短期入所生活介護', `${md(T + 6 * D)}から3泊の空きが出ました。ご利用されますか。`],
+      [3 * H, 'cm', 'ありがとうございます。ご家族に確認して、今日中にお返事します。'],
+      [25 * M, 'cm', 'ご家族の了承が取れました。3泊でお願いします。'],
+    ], 3);
+    // 特養の入所調整
+    story(cm.id, ['介護老人福祉施設（特養）'], [
+      [3 * D, '介護老人福祉施設（特養）', '来月、1床空く見込みです。入所のご意向に変わりはないでしょうか。'],
+      [3 * D - 2 * H, 'cm', '長男さんに確認します。少しお時間をください。'],
+      [12 * M, 'cm', '長男さんから、ぜひお願いしたいとのお返事でした。面談の日程を調整させてください。'],
+    ], 4);
+  }
+  // 事業所からの新しい報告（ケアマネはまだ読んでいない）
+  for (const cm of CMS) {
+    const fresh = db.clients.filter((c) => c.cm_id === cm.id && !c.archived && !c.used && postersOf(c).length).slice(0, 4 + cm.id);
+    fresh.forEach((c, k) => { const p = pick(postersOf(c)); say(c, p.user.id, sayOf(svcOfOffice(p.oid)), T - (20 + k * 47) * M); });
+  }
+  // ケアマネから事業所への新しい連絡（事業所はまだ読んでいない）
+  SVC.forEach((_, i) => {
+    for (const cm of CMS) {
+      const c = db.clients.find((x) => x.cm_id === cm.id && !x.archived && x.svc.has(i) && linkOf(cm.id, officeId(cm.id, i)));
+      if (c && chance(0.6)) say(c, cm.id, cmSay(), T - (30 + rnd(600)) * M);
+    }
+  });
 
   // ---- 添付ファイルの見本（CSV・写真・PDF） ----
   const files = new Map();
@@ -279,21 +331,37 @@
     out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`;
     return new Blob([out], { type: 'application/pdf' });
   }
-  {
-    const nurseClient = db.clients.find((c) => c.office_ids.includes(3)) || db.clients[0];
-    const homeClient = db.clients.find((c) => c.office_ids.includes(1)) || db.clients[0];
-    const csv = '日付,血圧（上）,血圧（下）,脈拍,体温,メモ\n11/3,142,84,72,36.4,むくみ軽度\n11/5,138,82,70,36.5,\n11/7,136,80,74,36.6,服薬の飲み忘れ1回\n11/9,140,85,71,36.4,\n';
-    addFile(nurseClient.id, 4, '11月_バイタル記録.csv', 'text/csv', new Blob([csv], { type: 'text/csv' }), T - 6 * H, '11月のバイタル記録です。血圧がやや高めで推移しています。');
+  for (const cm of CMS) {
+    const nurse = db.clients.find((c) => c.cm_id === cm.id && !c.archived && c.svc.has(si('訪問看護')) && linkOf(cm.id, officeId(cm.id, si('訪問看護'))));
+    const home = db.clients.find((c) => c.cm_id === cm.id && !c.archived && c.svc.has(si('訪問介護')) && c !== nurse);
+    const csv = '日付,血圧（上）,血圧（下）,脈拍,体温,メモ\n11/3,142,84,72,36.4,むくみ軽度\n11/5,138,82,70,36.5,\n11/7,136,80,74,36.6,服薬の飲み忘れ1回\n11/9,140,85,71,36.4,\n11/11,134,80,70,36.5,\n';
+    if (nurse) addFile(nurse.id, P('訪問看護'), '11月_バイタル記録.csv', 'text/csv', new Blob([csv], { type: 'text/csv' }), T - (6 + cm.id) * H, '11月のバイタル記録です。血圧がやや高めで推移しています。');
     const png = samplePng();
-    if (png) addFile(homeClient.id, 2, 'お薬カレンダー.png', 'image/png', png, T - 5 * H, '本日、お薬カレンダーの飲み忘れ（赤い所）を確認しました。');
-    addFile(homeClient.id, 1, 'ケアプラン_見本.pdf', 'application/pdf', samplePdf(), T - 4 * H, '');
-    db.messages.sort((a, z) => a.at - z.at);
-    // 並べ替え後に id を振り直し、添付の紐づけも合わせる
+    if (home && png) addFile(home.id, P('訪問介護'), 'お薬カレンダー.png', 'image/png', png, T - (5 + cm.id) * H, '本日、お薬カレンダーの飲み忘れ（赤い所）を確認しました。');
+    if (home) addFile(home.id, cm.id, 'ケアプラン_見本.pdf', 'application/pdf', samplePdf(), T - (4 + cm.id) * H, '来月からのケアプランです。ご確認ください。');
+  }
+
+  // id を時刻順に振り直す（添付の紐づけも合わせる）
+  db.messages.sort((a, z) => a.at - z.at);
+  {
     const remap = new Map();
     db.messages.forEach((m, i) => { remap.set(m.id, i + 1); m.id = i + 1; });
     for (const [oldId, f] of [...files]) { files.delete(oldId); f.message_id = remap.get(oldId); files.set(f.message_id, f); }
-    db.reads = new Set([...db.reads].map((k) => { const [u, id] = k.split(':'); return `${u}:${remap.get(Number(id)) ?? id}`; }));
+    db.seq = db.messages.length + 1000;
   }
+  // 既読：トークに入れる人（ケアマネと、つながっている事業所）のうち、書いた人以外。直近の分は未読のまま
+  const members = (c) => [c.cm_id, ...c.office_ids.filter((oid) => linkOf(c.cm_id, oid)).map((oid) => providerOf(svcOfOffice(oid)).id)];
+  const clientById = new Map(db.clients.map((c) => [c.id, c]));
+  for (const m of db.messages) {
+    const age = T - m.at;
+    const c = clientById.get(m.client_id);
+    for (const u of members(c)) {
+      if (u === m.author_id) continue;
+      // 30時間より前は全員が既読。それより新しいものは、6時間以上たっていれば半分くらいの人が読んでいる
+      if (age > 30 * H || (age > 6 * H && (u + m.id) % 2 === 0)) db.reads.add(`${u}:${m.id}`);
+    }
+  }
+  for (const c of db.clients) { delete c.svc; delete c.used; delete c.lv; }
 
   let session = null;
   const nextId = () => ++db.seq;
@@ -301,7 +369,44 @@
   const ok = (body) => ({ status: 200, body });
   // 操作の記録は、どのケアマネの記録かを持たせる（事業所の操作は、相手のケアマネの記録に入る）
   const log = (u, action, target, cm) => db.audit.unshift({ id: nextId(), at: Date.now(), action, target, ip: 'デモ', login_id: u?.login_id, name: u?.name, cm: cm ?? u?.cm_id });
-  const office = (id) => db.offices.find((o) => o.id === id);
+  // デモ：通知をオンにしていると、送った連絡に相手から自動で返事が来て、サーバーの「合図」をまねて画面に知らせる
+  let demoPush = false;
+  // 相手役：ケアマネが見ている → 返信できる事業所のどれか／事業所が見ている → 担当のケアマネ
+  function counterpart(u, c) {
+    if (u.role !== 'cm') return { user: db.users.find((x) => x.id === c.cm_id), text: cmSay() };
+    const p = postersOf(c);
+    if (!p.length) return null;
+    const one = p[rnd(p.length)];
+    return { user: one.user, text: sayOf(svcOfOffice(one.oid)) };
+  }
+  function demoReply(u, c, wait, text) {
+    const other = counterpart(u, c);
+    if (!other || (wait && !demoPush)) return false;
+    const post = () => {
+      db.messages.push({ id: nextId(), client_id: c.id, author_id: other.user.id, body: text || other.text, at: Date.now() });
+      if (demoPush) window.dispatchEvent(new Event('careble-signal'));
+    };
+    if (wait) setTimeout(post, wait); else post();
+    return true;
+  }
+  // テスト用：いまログインしている人あてに、相手からの連絡を1件届ける
+  window.demoInject = (clientId, text) => { const c = db.clients.find((x) => x.id === clientId); return !!(session && c && demoReply(session, c, 0, text)); };
+  // デモの画面から使う：相手から連絡が1件届く（name を渡すと、その利用者のトークに届く）
+  window.demoArrive = (name) => {
+    const u = session;
+    if (!u) return null;
+    const vis = db.clients.filter((c) => visible(u, c) && counterpart(u, c));
+    const c = (name && vis.find((x) => x.name === name)) || vis[rnd(Math.min(vis.length, 12))];
+    if (!c || !demoReply(u, c, 0)) return null;
+    return c.name;
+  };
+  window.demoPushOn = () => demoPush;
+  window.demoSession = () => (session ? { id: session.id, role: session.role, login_id: session.login_id, name: session.name } : null);
+  // 切り替えボタン用の一覧
+  window.demoInfo = {
+    cms: CMS.map((c) => ({ login_id: c.login_id, name: c.name, total: c.active + c.ended, active: c.active })),
+    providers: SVC.map(([type, name, staff, login], i) => ({ login_id: login, type, office: name, staff, group: i >= 18 ? '入所サービス' : '居宅サービス' })),
+  };
   const userOf = (id) => db.users.find((x) => x.id === id);
   // 事業所アカウントが、そのケアマネとつながっていて使える状態か（使えるならそのケアマネ側の事業所を返す）
   const linkFor = (u, cmId) => {
@@ -310,12 +415,12 @@
   };
   const activeLinks = (u) => db.links.filter((l) => l.user_id === u.id && linkFor(u, l.cm_id)).sort((a, z) => a.at - z.at);
   const pub = (u) => {
-    if (u.role === 'cm') return { id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must, office: null };
+    if (u.role === 'cm') return { id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must, font_size: u.font_size || null, pref: u.pref || null, office: null };
     const act = activeLinks(u);
     const l = act.find((x) => x.cm_id === u.cm_id) || act[0];
     const o = l ? office(l.office_id) : null;
     return {
-      id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must,
+      id: u.id, role: u.role, login_id: u.login_id, name: u.name, must_change_pw: u.must, font_size: u.font_size || null, pref: u.pref || null,
       office: o ? { id: o.id, name: o.name, can_post: o.can_post, service_type: o.service_type } : null,
       links: act.length, pending: db.links.filter((x) => x.user_id === u.id && x.status === 'pending').length,
     };
@@ -332,17 +437,38 @@
     if (method === 'POST' && path === '/api/login') {
       const u = db.users.find((x) => x.login_id === b.login_id);
       if (!u || u.pw !== b.password || !u.active) { log(u, 'login_fail', b.login_id); return err(401, 'ログインIDまたはパスワードが違います'); }
-      session = u; log(u, 'login_success');
+      session = u; demoPush = false; log(u, 'login_success');
       return ok({ token: 'demo-token-000000000000000', user: pub(u) });
     }
     const u = session;
     if (!u) return err(401, 'ログインしてください');
-    if (path === '/api/me') return ok({ user: pub(u) });
+    if (path === '/api/me') return ok({ user: pub(u), push_key: 'demo' });
+    if (path === '/api/me/prefs') {
+      if (b.font_size === undefined && b.pref === undefined) return err(400, '変更する内容がありません');
+      if (b.font_size !== undefined) {
+        if (!['normal', 'large', 'xlarge'].includes(b.font_size)) return err(400, '文字の大きさが不正です');
+        u.font_size = b.font_size;
+      }
+      if (b.pref !== undefined) u.pref = b.pref;
+      return ok({ ok: true });
+    }
     if (path === '/api/logout') { log(u, 'logout'); session = null; return ok({ ok: true }); }
     if (path === '/api/password') {
       if (b.current !== u.pw) return err(400, '現在のパスワードが違います');
       if (!b.next || b.next.length < 10) return err(400, 'パスワードは10文字以上にしてください');
       u.pw = b.next; u.must = false; log(u, 'password_change'); return ok({ ok: true });
+    }
+    // 通知の合図（デモではブラウザの中でまねをする）
+    if (path === '/api/push/key') return ok({ key: 'demo' });
+    if (path === '/api/push/subscribe') { demoPush = true; return ok({ ok: true }); }
+    if (path === '/api/push/unsubscribe') { demoPush = false; return ok({ ok: true }); }
+    if (path === '/api/unread') {
+      let rooms = 0, unread = 0, latest = 0;
+      db.clients.filter((c) => visible(u, c)).forEach((c) => {
+        const un = db.messages.filter((m) => m.client_id === c.id && m.author_id !== u.id && !db.reads.has(`${u.id}:${m.id}`));
+        if (un.length) { rooms++; unread += un.length; latest = Math.max(latest, ...un.map((m) => m.id)); }
+      });
+      return ok({ rooms, unread, latest });
     }
     if (path === '/api/rooms') {
       const of = Number(q.get('office_id') || 0);
@@ -374,6 +500,7 @@
         const id = nextId();
         db.messages.push({ id, client_id: c.id, author_id: u.id, body: text, at: Date.now() });
         log(u, 'message_post', `${c.name} 様`, c.cm_id);
+        demoReply(u, c, 6000);
         return ok({ ok: true, id });
       }
       const after = Number(q.get('after') || 0);
@@ -443,6 +570,20 @@
       if (b.service_type != null) o.service_type = b.service_type;
       if (b.active != null) o.active = !!b.active;
       log(u, 'office_update', o.name); return ok({ ok: true });
+    }
+    if ((m = path.match(/^\/api\/offices\/(\d+)\/delete$/))) {
+      const o = office(Number(m[1])); if (!o || o.cm_id !== u.cm_id) return err(404, '見つかりません');
+      for (const c of db.clients) if (c.cm_id === u.cm_id) c.office_ids = c.office_ids.filter((x) => x !== o.id);
+      db.links = db.links.filter((l) => !(l.cm_id === u.cm_id && l.office_id === o.id));
+      db.offices.splice(db.offices.indexOf(o), 1);
+      log(u, 'office_delete', o.name); return ok({ ok: true });
+    }
+    if ((m = path.match(/^\/api\/clients\/(\d+)\/delete$/))) {
+      const c = db.clients.find((x) => x.id === Number(m[1])); if (!c || c.cm_id !== u.cm_id) return err(404, '見つかりません');
+      db.messages = db.messages.filter((x) => x.client_id !== c.id);
+      for (const [k, f] of [...files]) if (f.client_id === c.id) files.delete(k);
+      db.clients.splice(db.clients.indexOf(c), 1);
+      log(u, 'client_delete', c.name); return ok({ ok: true });
     }
     if (path === '/api/clients' && method === 'GET') return ok({ clients: db.clients.filter((c) => c.cm_id === u.cm_id).map((c) => ({ ...c })).sort((a, z) => a.archived - z.archived) });
     if (path === '/api/clients' && method === 'POST') {
